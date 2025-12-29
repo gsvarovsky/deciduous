@@ -234,6 +234,11 @@ digraph {
     const backwards: { [name: string]: string[] } = {};
     const allNodes = [...facts, ...attacks, ...mitigations, ...goals];
     const types: { [name: string]: NodeType } = {};
+    for (const fact of facts) {
+        if (!fact.from?.length) {
+            fact.from = ["reality"];
+        }
+    }
     for (const node of allNodes) {
         if (typeof node != "object" || node === null) {
             throw new Error(`nodes must each be an object containing at least one property`);
