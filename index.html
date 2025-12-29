@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width", initial-scale=1, maximum-scale=1>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <meta name="description" property="og:description" content="Deciduous is a decision tree generator that simplifies modeling adverse scenarios for engineering teams who want to understand their systems' resilience to failure">
     <meta name="author" content="Ryan Petrich, Kelly Shortridge">
     <meta property="og:description" content="Deciduous is a decision tree generator that simplifies modeling adverse scenarios for engineering teams who want to understand their systems' resilience to failure" />
@@ -750,7 +750,7 @@ filter:
                                 }
                             }, false);
                             // Clone edge paths and make them thicker to make them easier to click
-                            if (title.parentNode.getAttribute("class") === "edge") {
+                            if (title.parentElement.getAttribute("class") === "edge") {
                                 const path = title.parentNode.querySelector("path");
                                 if (path) {
                                     const thickPath = path.cloneNode(true);
@@ -909,6 +909,23 @@ filter:
             inputSource.addEventListener("dragover", (event) => {
                 event.preventDefault();
             }, false);
+            inputSource.addEventListener("selectionchange", () => {
+                const {selectionStart, selectionEnd, value} = inputSource;
+                if (selectionEnd > selectionStart) {
+                    const selection = value.substring(selectionStart, selectionEnd);
+                    for (const title of renderTarget.querySelectorAll(".node title")) {
+                          // Highlight selected node
+                          const path = title.parentElement.querySelector("path");
+                          if (title.textContent === selection) {
+                              path.setAttribute("stroke", "blue");
+                              path.setAttribute("stroke-width", "3px");
+                          } else {
+                              path.setAttribute("stroke", "transparent");
+                              path.removeAttribute("stroke-width");
+                          }
+                    }
+                }
+            });
             function importText(text) {
                 const hiddenComment = parseEmbeddedComment(text);
                 inputSource.value = hiddenComment !== undefined ? hiddenComment : text;
