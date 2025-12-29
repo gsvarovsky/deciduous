@@ -73,6 +73,7 @@ function mangleName(name: string) {
 export type Input = {
     theme?: keyof typeof themes | string;
     dark?: boolean;
+    hideReality?: boolean;
     title?: string;
     goals?: NodeDeclaration[];
     facts?: NodeDeclaration[];
@@ -200,7 +201,8 @@ export function convertToDot(parsed: Input): RenderedOutput {
     const theme = themes[themeName] as Theme;
     const dark = !!theme.dark;
 
-    const propertiesOfReality = { fillcolor: theme["reality-fill"], fontcolor: theme["reality-text"] } as const;
+    const propertiesOfReality = (parsed.hideReality ? { style: "invis" } :
+        { fillcolor: theme["reality-fill"], fontcolor: theme["reality-text"] }) as GraphvizNodeProperties;
     const header = `// Generated from https://www.deciduous.app/
 digraph {
     // base graph styling
@@ -367,6 +369,9 @@ digraph {
                     }
                     props.weight = "0";
                 }
+                if (fromName === "reality" && parsed.hideReality) {
+                    props.style = "invis";
+                }
                 edges.push(line(`${mangleName(fromName)} -> ${mangleName(name)}`, props));
             });
             return edges;
@@ -474,7 +479,14 @@ ${footer}`;
     }
 
     return {
-        dot: header + "    " + allNodeLines.join("\n    ") + "\n\n    // edges\n    " + allEdgeLines.join("\n    ") + "\n\n    // left-to-right layout directives\n" + subgraphs.join("\n\n") + footer,
+        dot: header +
+            "    " +
+            allNodeLines.join("\n    ") +
+            "\n\n    // edges\n    " +
+            allEdgeLines.join("\n    ") +
+            "\n\n    // left-to-right layout directives\n" +
+            subgraphs.join("\n\n") +
+            footer,
         title: typeof parsed.title === "string" ? parsed.title : "",
         types,
         themeName,
