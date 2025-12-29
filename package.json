@@ -8,7 +8,8 @@
   },
   "type": "module",
   "scripts": {
-    "build": "tsc --strict --lib es2017 --module es2022 layout.ts"
+    "build": "tsc",
+    "dev": "concurrently \"tsc --watch\" \"browser-sync start -s -f layout.js index.html\""
   },
   "bin": {
     "deciduous": "./cli-cjs.js"
@@ -30,6 +31,8 @@
   },
   "homepage": "https://github.com/rpetrich/deciduous#readme",
   "devDependencies": {
+    "browser-sync": "^3.0.4",
+    "concurrently": "^9.2.1",
     "typescript": "^5.3.3"
   },
   "dependencies": {

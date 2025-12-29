@@ -198,7 +198,7 @@ export function convertToDot(parsed: Input): RenderedOutput {
     const font = 'Arial'
     const themeName = typeof parsed.theme === "string" && Object.hasOwnProperty.call(themes, parsed.theme) ? parsed.theme : "default";
     const theme = themes[themeName] as Theme;
-    const dark = theme.dark ? true : false;
+    const dark = !!theme.dark;
 
     const propertiesOfReality = { fillcolor: theme["reality-fill"], fontcolor: theme["reality-text"] } as const;
     const header = `// Generated from https://www.deciduous.app/
@@ -240,7 +240,7 @@ digraph {
         const fromNames = backwards[toName] || (backwards[toName] = []);
         if (node.from) {
             for (const from of node.from) {
-                const { name, label, backwards, ungrouped } = parseFrom(from);
+                const { name, backwards, ungrouped } = parseFrom(from);
                 if (!backwards && !ungrouped) {
                     const toNames = forwards[name] || (forwards[name] = []);
                     toNames.push(toName);
