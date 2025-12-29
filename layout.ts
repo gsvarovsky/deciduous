@@ -73,7 +73,7 @@ function mangleName(name: string) {
 export type Input = {
     theme?: keyof typeof themes | string;
     dark?: boolean;
-    hideReality?: boolean;
+    reality?: "#hide" | string;
     title?: string;
     goals?: NodeDeclaration[];
     facts?: NodeDeclaration[];
@@ -201,7 +201,7 @@ export function convertToDot(parsed: Input): RenderedOutput {
     const theme = themes[themeName] as Theme;
     const dark = !!theme.dark;
 
-    const propertiesOfReality = (parsed.hideReality ? { style: "invis" } :
+    const propertiesOfReality = (parsed.reality === "#hide" ? { style: "invis" } :
         { fillcolor: theme["reality-fill"], fontcolor: theme["reality-text"] }) as GraphvizNodeProperties;
     const header = `// Generated from https://www.deciduous.app/
 digraph {
@@ -220,7 +220,7 @@ digraph {
     edge [ fontname=${JSON.stringify(font)} fontsize=12 color="${theme["edge"]}" ]
 
     // is reality a hologram?
-    ${line("reality", { label: "Reality", ...propertiesOfReality })}
+    ${line("reality", { label: parsed.reality || "Reality", ...propertiesOfReality })}
 
 `;
     const goals = parsed.goals || [];
@@ -374,7 +374,7 @@ digraph {
                     }
                     props.weight = "0";
                 }
-                if (fromName === "reality" && parsed.hideReality) {
+                if (fromName === "reality" && parsed.reality === "#hide") {
                     props.style = "invis";
                 }
                 edges.push(line(`${mangleName(fromName)} -> ${mangleName(name)}`, props));
@@ -441,7 +441,7 @@ digraph {
     }
     if (parsed.legend) {
         footer = `    ${line("legend_reality", {
-        label: "Reality",
+        label: parsed.reality || "Reality",
         ...propertiesOfReality,
     })}
     ${line("legend_fact", {
