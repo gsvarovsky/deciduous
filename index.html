@@ -555,6 +555,15 @@ filter:
             let lastPngObjectURL = "";
             let types = {};
             let themeName = "default";
+            function findComponent(name, from) {
+                let searchEx = `-\\s+(["'])?${name}\\1`;
+                const index = from == null ?
+                    lastInput.search(searchEx + ':') : // Finding component definition
+                    lastInput.slice(from).search(searchEx); // Finding reference in a from block
+                if (index !== -1) {
+                    return lastInput.indexOf(name, index + (from || 0));
+                }
+            }
             function selectRange(start, end) {
                 inputSource.blur();
                 inputSource.selectionEnd = inputSource.selectionStart = start;
@@ -723,20 +732,20 @@ filter:
                                 const matches = node.match(/^(\w+)->(\w+)$/);
                                 if (matches) {
                                     // Select the appropriate "from entry" inside the target attack, mitigation or goal
-                                    const firstIndex = lastInput.indexOf("\n- " + matches[2]);
-                                    if (firstIndex != -1) {
-                                        let secondIndex = lastInput.indexOf("- " + matches[1], firstIndex + 4 + matches[2].length);
-                                        if (secondIndex != -1) {
+                                    const defStart = findComponent(matches[2]);
+                                    if (defStart != null) {
+                                        let fromRefStart = findComponent(matches[1], defStart + matches[2].length);
+                                        if (fromRefStart != null) {
                                             changeEditingState(true);
-                                            selectRange(secondIndex + 2, secondIndex + 2 + matches[1].length);
+                                            selectRange(fromRefStart, fromRefStart + matches[1].length);
                                         }
                                     }
                                 } else {
                                     // Select a top level attack, mitigation or goal
-                                    const index = lastInput.indexOf("\n- " + node);
-                                    if (index != -1) {
+                                    const start = findComponent(node);
+                                    if (start != null) {
                                         changeEditingState(true);
-                                        selectRange(index + 3, index + 3 + node.length);
+                                        selectRange(start, start + node.length);
                                     }
                                 }
                             }, false);
