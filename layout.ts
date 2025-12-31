@@ -88,21 +88,27 @@ export type NodeDeclaration = {
     from: FromDeclaration[];
 } & { [name: string]: string; }
 
-export interface EffectOptions {
+export interface EffectDeclaration {
     effect?: number;
     implemented?: boolean; // Generally for mitigations
     likelihood?: number; // Generally for attacks
 }
 
-export type FromDeclaration = string | ({
-    backwards?: boolean;
-    ungrouped?: boolean;
-} & EffectOptions & { [name: string]: string | null; });
+export interface EffectFlags {
+    required: boolean; // Default false
+    sufficient: boolean; // Default true
+}
 
-export type From = {
+export type FromDeclaration = string |
+    (Partial<FromFlags> & EffectDeclaration & { [name: string]: string | null; });
+
+export interface FromFlags extends EffectFlags {
+    backwards: boolean; // Default false
+    ungrouped: boolean; // Default false
+}
+
+export type From = FromFlags & {
     name: string;
-    backwards: boolean;
-    ungrouped: boolean;
     effect: number | undefined;
     label?: "#yolosec" | string;
 };
@@ -134,6 +140,40 @@ type Theme = {
     "goal-text": string;
 };
 
+class CalcRisk {
+    private readonly ors: string[] = [];
+    private readonly ands: string[] = [];
+
+    constructor(readonly risk: Risk) {
+    }
+
+    or(...values: (number | undefined)[]) {
+        // Don't know if they're independent, so take the max
+        this.risk.value = Math.max(this.risk.value, this.push("ors", values));
+    }
+
+    and(...values: (number | undefined)[]) {
+        this.risk.value *= this.push("ands", values);
+    }
+
+    private push(dir: "ors" | "ands", values: (number | undefined)[]) {
+        let definedValues = values.filter((value): value is number => value != null);
+        if (definedValues.length) {
+            this[dir].push(definedValues.length > 1 ?
+                `(${definedValues.map(oneDecPlace).join("×")})` :
+                String(oneDecPlace(definedValues[0])));
+        }
+        return definedValues.reduce((acc, risk) => acc * risk, 1);
+    }
+
+    toString() {
+        let calcIn = this.ors.join(",");
+        calcIn &&= this.ors.length > 1 ? `max(${calcIn})` : calcIn;
+        const calcOut = this.ands.join("×");
+        return [calcIn, calcOut].filter(s => s).join("×");
+    }
+}
+
 function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
     const entries = Object.entries(obj);
     if (entries.length === 0) {
@@ -143,32 +183,38 @@ function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
 }
 
 function parseFrom(raw: FromDeclaration): From {
+    let name: string,
+        label: string | undefined,
+        backwards = false,
+        ungrouped = false,
+        required = false,
+        sufficient = true,
+        effect: number | undefined;
     if (typeof raw == "object") {
-        const [fromName, label] = firstProperty(raw);
-        const result: From = {
-            name: fromName,
-            backwards: typeof raw.backwards === "boolean" ? raw.backwards : false,
-            ungrouped: typeof raw.ungrouped === "boolean" ? raw.ungrouped : false,
-            effect:
-                toEffect('effect', raw.effect) ??
-                toEffect('implemented', raw.implemented) ??
-                toEffect('likelihood', raw.likelihood) ??
-                (label === "#yolosec" ? 1 : undefined),
-        };
-        if (typeof label === "string") {
-            result.label = label;
-        }
-        return result;
+        const [fromName, rawLabel] = firstProperty(raw);
+        name = fromName;
+        if (typeof rawLabel === "string")
+            label = rawLabel;
+        if (typeof raw.backwards === "boolean")
+            backwards = raw.backwards;
+        if (typeof raw.ungrouped === "boolean")
+            ungrouped = raw.ungrouped;
+        if (typeof raw.required === "boolean")
+            required = raw.required;
+        if (typeof raw.sufficient === "boolean")
+            sufficient = raw.sufficient;
+        effect =
+            toEffect('effect', raw.effect) ??
+            toEffect('implemented', raw.implemented) ??
+            toEffect('likelihood', raw.likelihood) ??
+            (rawLabel === "#yolosec" ? 1 : undefined);
+    } else {
+        name = String(raw);
     }
-    return {
-        name: String(raw),
-        backwards: false,
-        ungrouped: false,
-        effect: undefined,
-    };
+    return { name, label, backwards, ungrouped, effect, required, sufficient };
 }
 
-function toEffect<K extends keyof EffectOptions>(key: K, value: EffectOptions[K]) {
+function toEffect<K extends keyof EffectDeclaration>(key: K, value: EffectDeclaration[K]) {
     const effect = Number(value);
     if (effect < 0 || effect > 1) {
         throw new Error(`${key} must have a value between 0 and 1`);
@@ -282,43 +328,26 @@ digraph {
 
         getRisk(): Risk {
             if (this.risk == null) {
-                const accRisk = this.risk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
-                const calc = new class {
-                    private in: number[] = [];
-                    private out: number[] = [];
-                    processIncoming(risk: Risk | undefined, effect: number | undefined) {
-                        // Incoming effects put us at risk
-                        // Don't know if they're independent, so take the max
-                        accRisk.value = Math.max(accRisk.value, (risk?.value ?? 1) * this.push("in", effect));
-                    }
-                    processOutgoing(effect: number | undefined) {
-                        // Outgoing mitigation effects mitigate our risk
-                        accRisk.value *= this.push("out", effect);
-                    }
-                    private push(dir: "in" | "out", effect: number | undefined) {
-                        if (effect != null)
-                            this[dir].push(effect);
-                        return effect ?? 1;
-                    }
-                    toString() {
-                        let calcIn = this.in.map(oneDecPlace).join(",");
-                        calcIn &&= this.in.length > 1 ? `max(${calcIn})` : calcIn;
-                        const calcOut = this.out.map(oneDecPlace).join("×");
-                        return [calcIn, calcOut].filter(s => s).join("×");
-                    }
-                }();
-                for (let from of this.from) {
-                    if (!from.backwards) {
-                        const risk = allNodes[from.name]?.getRisk();
-                        if (risk?.calc === "#REC!")
-                            return this.risk;
-                        calc.processIncoming(risk, this.incomingRiskEffect(from));
+                this.risk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
+                const calc = new CalcRisk(this.risk);
+                // Incoming attack/fact risks and effects on the risk
+                // If nothing is sufficient, risk is nothing
+                if (this.from.some(from => from.sufficient)) {
+                    for (let from of this.from) {
+                        if (!from.backwards) {
+                            const risk = allNodes[from.name]?.getRisk();
+                            if (risk?.calc === "#REC!")
+                                return this.risk;
+                            calc[from.required ? "and" : "or"](
+                                risk?.value, this.incomingRiskEffect(from));
+                        }
                     }
                 }
+                // Outgoing mitigation effects (no inherent risks)
                 for (let toNode of Object.values(allNodes)) {
                     for (let from of toNode.from) {
                         if (from.name === this.name) {
-                            calc.processOutgoing(toNode.outgoingRiskEffect(from));
+                            calc.and(toNode.outgoingRiskEffect(from));
                         }
                     }
                 }
@@ -435,7 +464,7 @@ digraph {
         .filter(node => shouldShow(node.name))
         .map(node => line(mangleName(node.name), {
             label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
-                (parsed.risk ? `\n(${node.getRisk()[parsed.risk]})` : ""),
+                (parsed.risk ? `\n<${node.getRisk()[parsed.risk]}>` : ""),
             ...node.name === "reality" ? propertiesOfReality : {
                 fillcolor: theme[`${node.type}-fill`],
                 fontcolor: theme[`${node.type}-text`] || "black",
@@ -458,7 +487,7 @@ digraph {
                     } else {
                         props.xlabel = "";
                     }
-                    props.xlabel += `(${(oneDecPlace(effect))})`;
+                    props.xlabel += `<${(oneDecPlace(effect))}>`;
                 }
                 if (effect === 0) {
                     props.style = "dotted";
