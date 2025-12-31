@@ -161,7 +161,7 @@ class CalcRisk {
         if (definedValues.length) {
             this[dir].push(definedValues.length > 1 ?
                 `(${definedValues.map(oneDecPlace).join("×")})` :
-                String(oneDecPlace(definedValues[0])));
+                oneDecPlace(definedValues[0]));
         }
         return definedValues.reduce((acc, risk) => acc * risk, 1);
     }
@@ -263,8 +263,8 @@ export type RenderedOutput = {
     themeName: string;
 };
 
-function oneDecPlace(effect: number) {
-    return Math.round(effect * 10) / 10;
+function oneDecPlace(effect: number | string) {
+    return typeof effect == 'string' ? effect : String(Math.round(effect * 10) / 10);
 }
 
 export function convertToDot(parsed: Input): RenderedOutput {
@@ -351,7 +351,7 @@ digraph {
                         }
                     }
                 }
-                this.risk.calc = calc.toString() || String(this.risk.value);
+                this.risk.calc = calc.toString() || oneDecPlace(this.risk.value);
             }
             return this.risk;
         }
@@ -464,7 +464,7 @@ digraph {
         .filter(node => shouldShow(node.name))
         .map(node => line(mangleName(node.name), {
             label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
-                (parsed.risk ? `\n<${node.getRisk()[parsed.risk]}>` : ""),
+                (parsed.risk ? `\n<${oneDecPlace(node.getRisk()[parsed.risk])}>` : ""),
             ...node.name === "reality" ? propertiesOfReality : {
                 fillcolor: theme[`${node.type}-fill`],
                 fontcolor: theme[`${node.type}-text`] || "black",
