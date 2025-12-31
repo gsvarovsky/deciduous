@@ -767,6 +767,7 @@ filter:
                                     const thickPath = path.cloneNode(true);
                                     thickPath.setAttribute("stroke", "transparent");
                                     thickPath.setAttribute("stroke-width", "15px");
+                                    thickPath.removeAttribute("stroke-dasharray");
                                     title.parentNode.insertBefore(thickPath, path);
                                 }
                             }

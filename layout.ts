@@ -74,6 +74,7 @@ export type Input = {
     theme?: keyof typeof themes | string;
     dark?: boolean;
     reality?: "#hide" | string;
+    risk?: "value" | "calc";
     title?: string;
     goals?: NodeDeclaration[];
     facts?: NodeDeclaration[];
@@ -83,24 +84,33 @@ export type Input = {
     legend?: boolean;
 };
 
-export type Node = {
+export type NodeDeclaration = {
     from: FromDeclaration[];
-};
+} & { [name: string]: string; }
 
-export type NodeDeclaration = Node;
+export interface EffectOptions {
+    effect?: number;
+    implemented?: boolean; // Generally for mitigations
+    likelihood?: number; // Generally for attacks
+}
 
 export type FromDeclaration = string | ({
     backwards?: boolean;
     ungrouped?: boolean;
-} & { [name: string]: string | null; });
+} & EffectOptions & { [name: string]: string | null; });
 
-export type ParsedFrom = {
+export type From = {
     name: string;
     backwards: boolean;
     ungrouped: boolean;
-    implemented: boolean;
-    label?: string;
+    effect: number | undefined;
+    label?: "#yolosec" | string;
 };
+
+export interface Risk {
+    value: number;
+    calc: string;
+}
 
 type NodeType = "attack" | "mitigation" | "fact" | "goal";
 
@@ -132,14 +142,18 @@ function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
     return entries[0];
 }
 
-function parseFrom(raw: FromDeclaration): ParsedFrom {
+function parseFrom(raw: FromDeclaration): From {
     if (typeof raw == "object") {
         const [fromName, label] = firstProperty(raw);
-        const result: ParsedFrom = {
+        const result: From = {
             name: fromName,
             backwards: typeof raw.backwards === "boolean" ? raw.backwards : false,
             ungrouped: typeof raw.ungrouped === "boolean" ? raw.ungrouped : false,
-            implemented: typeof raw.implemented === "boolean" ? raw.implemented : true,
+            effect:
+                toEffect('effect', raw.effect) ??
+                toEffect('implemented', raw.implemented) ??
+                toEffect('likelihood', raw.likelihood) ??
+                (label === "#yolosec" ? 1 : undefined),
         };
         if (typeof label === "string") {
             result.label = label;
@@ -150,8 +164,16 @@ function parseFrom(raw: FromDeclaration): ParsedFrom {
         name: String(raw),
         backwards: false,
         ungrouped: false,
-        implemented: true,
+        effect: undefined,
     };
+}
+
+function toEffect<K extends keyof EffectOptions>(key: K, value: EffectOptions[K]) {
+    const effect = Number(value);
+    if (effect < 0 || effect > 1) {
+        throw new Error(`${key} must have a value between 0 and 1`);
+    }
+    return isNaN(effect) ? undefined : effect;
 }
 
 function wordwrap(text: string, limit: number): string {
@@ -195,6 +217,10 @@ export type RenderedOutput = {
     themeName: string;
 };
 
+function oneDecPlace(effect: number) {
+    return Math.round(effect * 10) / 10;
+}
+
 export function convertToDot(parsed: Input): RenderedOutput {
     const font = 'Arial'
     const themeName = typeof parsed.theme === "string" && Object.hasOwnProperty.call(themes, parsed.theme) ? parsed.theme : "default";
@@ -232,31 +258,138 @@ digraph {
     const forwards: { [name: string]: string[] } = {};
     const forwardsAll: { [name: string]: string[] } = {};
     const backwards: { [name: string]: string[] } = {};
-    const allNodes = [...facts, ...attacks, ...mitigations, ...goals];
-    const types: { [name: string]: NodeType } = {};
-    for (const fact of facts) {
-        if (!fact.from?.length) {
-            fact.from = ["reality"];
+    const allNodes: { [name: string]: Node } = {};
+
+    abstract class Node {
+        public readonly name: string;
+        public readonly type: NodeType;
+        public readonly label: string;
+        public readonly from: From[];
+        private risk?: Risk;
+
+        protected constructor(type: NodeType, node: NodeDeclaration) {
+            if (typeof node != "object" || node === null) {
+                throw new Error(`nodes must each be an object containing at least one property`);
+            }
+            [this.name, this.label] = firstProperty<string>(node);
+            this.type = type;
+            if (Object.hasOwnProperty.call(allNodes, this.name)) {
+                throw new Error(`${this.name} cannot be declared twice. It was previously declared as ${type}`);
+            }
+            this.from = parseFroms(this.name, node);
+            allNodes[this.name] = this;
+        }
+
+        getRisk(): Risk {
+            if (this.risk == null) {
+                const accRisk = this.risk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
+                const calc = new class {
+                    private in: number[] = [];
+                    private out: number[] = [];
+                    processIncoming(risk: Risk | undefined, effect: number | undefined) {
+                        // Incoming effects put us at risk
+                        // Don't know if they're independent, so take the max
+                        accRisk.value = Math.max(accRisk.value, (risk?.value ?? 1) * this.push("in", effect));
+                    }
+                    processOutgoing(effect: number | undefined) {
+                        // Outgoing mitigation effects mitigate our risk
+                        accRisk.value *= this.push("out", effect);
+                    }
+                    private push(dir: "in" | "out", effect: number | undefined) {
+                        if (effect != null)
+                            this[dir].push(effect);
+                        return effect ?? 1;
+                    }
+                    toString() {
+                        let calcIn = this.in.map(oneDecPlace).join(",");
+                        calcIn &&= this.in.length > 1 ? `max(${calcIn})` : calcIn;
+                        const calcOut = this.out.map(oneDecPlace).join("×");
+                        return [calcIn, calcOut].filter(s => s).join("×");
+                    }
+                }();
+                for (let from of this.from) {
+                    if (!from.backwards) {
+                        const risk = allNodes[from.name]?.getRisk();
+                        if (risk?.calc === "#REC!")
+                            return this.risk;
+                        calc.processIncoming(risk, this.incomingRiskEffect(from));
+                    }
+                }
+                for (let toNode of Object.values(allNodes)) {
+                    for (let from of toNode.from) {
+                        if (from.name === this.name) {
+                            calc.processOutgoing(toNode.outgoingRiskEffect(from));
+                        }
+                    }
+                }
+                this.risk.calc = calc.toString() || String(this.risk.value);
+            }
+            return this.risk;
+        }
+
+        // Most node types have incoming effects
+        protected incomingRiskEffect(from: From): number | undefined {
+            return from.effect ?? 1;
+        }
+        protected outgoingRiskEffect(from: From): number | undefined {
+            return undefined;
         }
     }
-    for (const node of allNodes) {
-        if (typeof node != "object" || node === null) {
-            throw new Error(`nodes must each be an object containing at least one property`);
-        }
-        const [toName] = firstProperty(node);
-        const fromNames = backwards[toName] || (backwards[toName] = []);
-        if (node.from) {
-            for (const from of node.from) {
-                const { name, backwards, ungrouped } = parseFrom(from);
-                if (!backwards && !ungrouped) {
-                    const toNames = forwards[name] || (forwards[name] = []);
-                    toNames.push(toName);
-                    fromNames.push(name);
-                }
-                const toNames = forwardsAll[name] || (forwardsAll[name] = []);
-                toNames.push(toName);
+
+    class Fact extends Node {
+        constructor(node: NodeDeclaration) {
+            if (!node.from?.length) {
+                node.from = ["reality"];
             }
+            super("fact", node);
         }
+    }
+
+    class Attack extends Node {
+        constructor(node: NodeDeclaration) {
+            super("attack", node);
+        }
+    }
+
+    class Mitigation extends Node {
+        constructor(node: NodeDeclaration) {
+            super("mitigation", node);
+        }
+        // A mitigation effect is outgoing
+        protected incomingRiskEffect() {
+            return undefined;
+        }
+        protected outgoingRiskEffect(from: From) {
+            return 1 - (from.effect ?? 0); // effect is mitigating
+        }
+    }
+
+    class Goal extends Node {
+        constructor(node: NodeDeclaration) {
+            super("goal", node);
+        }
+    }
+
+    facts.forEach(node => new Fact(node));
+    attacks.forEach(node => new Attack(node));
+    mitigations.forEach(node => new Mitigation(node));
+    goals.forEach(node => new Goal(node));
+
+    function parseFroms(name: string, node: NodeDeclaration) {
+        const parsedFroms: From[] = [];
+        const fromNames = backwards[name] ??= [];
+        for (const from of node.from ?? []) {
+            const parsedFrom = parseFrom(from);
+            if (!parsedFrom.backwards && !parsedFrom.ungrouped) {
+                const toNames = forwards[parsedFrom.name] ??= [];
+                toNames.push(name);
+                fromNames.push(parsedFrom.name);
+            }
+            const toNames = forwardsAll[parsedFrom.name] ??= [];
+            toNames.push(name);
+            parsedFroms.push(parsedFrom);
+        }
+        return parsedFroms;
     }
 
     function anyDominates(forwards: { [name: string]: string[] }, d: string[], n: string) {
@@ -298,69 +431,36 @@ digraph {
         return name.replace(/_/g, " ").replace(/^[a-z]/, c => c.toUpperCase());
     }
 
-    function nodes(type: NodeType, values: NodeDeclaration[], properties: GraphvizNodeProperties) {
-        const result = [];
-        for (const value of values) {
-            const [name, label] = firstProperty(value);
-            if (Object.hasOwnProperty.call(types, name)) {
-                throw new Error(`${name} cannot be declared twice. It was previously declared as ${types[name]}`);
-            }
-            types[name] = type;
-            if (shouldShow(name)) {
-                result.push(line(mangleName(name), {
-                    label: wordwrap(label === null ? defaultLabelForName(name) : String(label), 18),
-                    ...name === "reality" ? propertiesOfReality : properties,
-                }));
-            }
-        }
-        return result;
-    }
+    const allNodeLines = Object.values(allNodes)
+        .filter(node => shouldShow(node.name))
+        .map(node => line(mangleName(node.name), {
+            label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
+                (parsed.risk ? `\n(${node.getRisk()[parsed.risk]})` : ""),
+            ...node.name === "reality" ? propertiesOfReality : {
+                fillcolor: theme[`${node.type}-fill`],
+                fontcolor: theme[`${node.type}-text`] || "black",
+            },
+        }));
 
-    const allNodeLines = [
-        `// facts`,
-        ...nodes("fact", facts, {
-            fillcolor: theme["fact-fill"],
-            fontcolor: theme["fact-text"] || "black",
-        }),
-        ``,
-        `// attacks`,
-        ...nodes("attack", attacks, {
-            fillcolor: theme["attack-fill"],
-            fontcolor: theme["attack-text"] || "black",
-        }),
-        ``,
-        `// mitigations`,
-        ...nodes("mitigation", mitigations, {
-            fillcolor: theme["mitigation-fill"],
-            fontcolor: theme["mitigation-text"] || "black",
-        }),
-        ``,
-        `// goals`,
-        ...nodes("goal", goals, {
-            fillcolor: theme["goal-fill"],
-            fontcolor: theme["goal-text"],
-        })
-    ];
-
-    function edges(entries: NodeDeclaration[], properties: GraphvizNodeProperties) {
-        return entries.reduce((edges, value) => {
-            const [name] = firstProperty(value);
-            if (!shouldShow(name)) {
-                return edges;
-            }
-            (value.from || []).forEach((from) => {
-                const { name: fromName, label, backwards, implemented } = parseFrom(from);
-                if (!shouldShow(fromName)) {
-                    return;
-                }
-                const props = {
-                    ...properties,
-                };
+    const allEdgeLines = Object.values(allNodes)
+        .filter(node => shouldShow(node.name))
+        .reduce<string[]>((edges, node) => {
+            node.from.forEach((from) => {
+                const { name: fromName, label, backwards, effect } = from;
+                const props: GraphvizNodeProperties = {};
                 if (typeof label === "string") {
                     props.xlabel = wordwrap(label, 20);
                     props.fontcolor = theme["edge-text"];
                 }
-                if (!implemented) {
+                if (parsed.risk && effect != null) {
+                    if (props.xlabel) {
+                        props.xlabel += "\n";
+                    } else {
+                        props.xlabel = "";
+                    }
+                    props.xlabel += `(${(oneDecPlace(effect))})`;
+                }
+                if (effect === 0) {
                     props.style = "dotted";
                 }
                 if (backwards) {
@@ -377,13 +477,10 @@ digraph {
                 if (fromName === "reality" && parsed.reality === "#hide") {
                     props.style = "invis";
                 }
-                edges.push(line(`${mangleName(fromName)} -> ${mangleName(name)}`, props));
+                edges.push(line(`${mangleName(fromName)} -> ${mangleName(node.name)}`, props));
             });
             return edges;
-        }, [] as string[]);
-    }
-
-    const allEdgeLines = [...edges(goals, {}), ...edges(attacks, {}), ...edges(mitigations, {}), ...edges(facts, {})];
+        }, []);
 
     const goalNames = goals.map((goal) => {
         const [goalName] = firstProperty(goal);
@@ -424,11 +521,10 @@ digraph {
     subgraphs.push(`    // top-to-bottom layout directives`);
     subgraphs.push(`    { rank=min; reality; }`);
 
-    for (const node of allNodes) {
-        const [toName] = firstProperty(node);
-        if (shouldShow(toName) && !forwards[toName] && shownGoals.indexOf(toName) === -1) {
+    for (const {name} of Object.values(allNodes)) {
+        if (shouldShow(name) && !forwards[name] && shownGoals.indexOf(name) === -1) {
             for (const goalName of shownGoals) {
-                subgraphs.push("    " + line(mangleName(toName) + " -> " + mangleName(goalName), { style: "invis", weight: "0" }));
+                subgraphs.push("    " + line(mangleName(name) + " -> " + mangleName(goalName), { style: "invis", weight: "0" }));
             }
         }
     }
@@ -493,7 +589,7 @@ ${footer}`;
             subgraphs.join("\n\n") +
             footer,
         title: typeof parsed.title === "string" ? parsed.title : "",
-        types,
+        types: Object.fromEntries(Object.values(allNodes).map(node => [node.name, node.type])),
         themeName,
     };
 }
