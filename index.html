@@ -547,9 +547,11 @@ filter:
             highlighting.scrollTop = inputSource.scrollTop;
             highlighting.scrollLeft = inputSource.scrollLeft;
         }
+        function matchTitle(title) {
+            return new RegExp(`(-\\s+)(["'])?${title}\\b\\2`, "g");
+        }
         function findTitle(yaml, title, from) {
-            const searchEx = `-\\s+(["'])?${title}\\1`;
-            const index = (from == null ? yaml : yaml.slice(from)).search(searchEx);
+            const index = (from == null ? yaml : yaml.slice(from)).search(matchTitle(title));
             if (index !== -1) {
                 return yaml.indexOf(title, index + (from || 0));
             }
@@ -804,13 +806,13 @@ filter:
                     const next = titleAt(inputSource.value, selectionEnd);
                     if (next && next !== prev) {
                         const diffLen = next.length - prev.length;
-                        const match = new RegExp(`\\b${prev}\\b`, 'g');
-                        inputSource.value = inputSource.value.replaceAll(match, (match, offset) => {
+                        const match = matchTitle(prev);
+                        inputSource.value = inputSource.value.replaceAll(match, (match, pre, quote, offset) => {
                             if (offset < selectionStart) {
                                 selectionStart += diffLen;
                                 selectionEnd += diffLen;
                             }
-                            return next;
+                            return `${pre}${quote ?? ""}${next}${quote ?? ""}`;
                         });
                         inputSource.selectionStart = selectionStart;
                         inputSource.selectionEnd = selectionEnd;

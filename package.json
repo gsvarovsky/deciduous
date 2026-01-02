@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "dev": "concurrently \"tsc --watch\" \"browser-sync start -s -f layout.js index.html\""
+    "dev": "concurrently \"tsc --watch\" \"browser-sync start -s -f layout.js -f index.html\""
   },
   "bin": {
     "deciduous": "./cli-cjs.js"
