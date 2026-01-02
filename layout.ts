@@ -100,7 +100,7 @@ export interface EffectFlags {
 }
 
 export type FromDeclaration = string |
-    (Partial<FromFlags> & EffectDeclaration & { [name: string]: string | null; });
+    (Partial<FromFlags> & EffectDeclaration & { [name: string]: string | number | null; });
 
 export interface FromFlags extends EffectFlags {
     backwards: boolean; // Default false
@@ -193,8 +193,8 @@ function parseFrom(raw: FromDeclaration): From {
     if (typeof raw == "object") {
         const [fromName, rawLabel] = firstProperty(raw);
         name = fromName;
-        if (typeof rawLabel === "string")
-            label = rawLabel;
+        if (typeof rawLabel === "string" || typeof rawLabel === "number")
+            label = String(rawLabel);
         if (typeof raw.backwards === "boolean")
             backwards = raw.backwards;
         if (typeof raw.ungrouped === "boolean")
@@ -207,17 +207,24 @@ function parseFrom(raw: FromDeclaration): From {
             toEffect('effect', raw.effect) ??
             toEffect('implemented', raw.implemented) ??
             toEffect('likelihood', raw.likelihood) ??
-            (rawLabel === "#yolosec" ? 1 : undefined);
+            (label === "#yolosec" ? 1 : undefined) ??
+            (function () {
+                const matchInlineEffect = label?.match(/\s*<(1|(0(\.\d+)?))>$/);
+                if (matchInlineEffect != null) {
+                    label = label?.substring(0, matchInlineEffect.index);
+                    return Number(matchInlineEffect[1]);
+                }
+            })();
     } else {
         name = String(raw);
     }
     return { name, label, backwards, ungrouped, effect, required, sufficient };
 }
 
-function toEffect<K extends keyof EffectDeclaration>(key: K, value: EffectDeclaration[K]) {
+function toEffect(key: string, value?: any):number | undefined {
     const effect = Number(value);
     if (effect < 0 || effect > 1) {
-        throw new Error(`${key} must have a value between 0 and 1`);
+        throw new Error(`Effect in {${key}: ${value}} must be between 0 and 1`);
     }
     return isNaN(effect) ? undefined : effect;
 }
