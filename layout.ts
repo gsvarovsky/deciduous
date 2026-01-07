@@ -504,7 +504,7 @@ digraph {
         .filter(node => shouldShow(node.name))
         .map(node => line(mangleName(node.name), {
             label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
-                "\n" + node.displayRisk(),
+                (parsed.risk ? "\n" + node.displayRisk() : ""),
             ...node.name === "reality" ? propertiesOfReality : {
                 fillcolor: theme[`${node.type}-fill`],
                 fontcolor: theme[`${node.type}-text`] || "black",
