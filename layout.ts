@@ -149,7 +149,7 @@ class CalcRisk {
 
     or(...values: (number | undefined)[]) {
         // Don't know if they're independent, so take the max
-        this.risk.value = Math.max(this.risk.value, this.push("ors", values));
+        this.risk.value += this.push("ors", values);
     }
 
     and(...values: (number | undefined)[]) {
@@ -160,8 +160,8 @@ class CalcRisk {
         let definedValues = values.filter((value): value is number => value != null);
         if (definedValues.length) {
             this[dir].push(definedValues.length > 1 ?
-                `(${definedValues.map(oneDecPlace).join("×")})` :
-                oneDecPlace(definedValues[0]));
+                `(${definedValues.map(rounded).join("×")})` :
+                rounded(definedValues[0]));
         }
         return definedValues.reduce((acc, risk) => acc * risk, 1);
     }
@@ -270,9 +270,11 @@ export type RenderedOutput = {
     themeName: string;
 };
 
-function oneDecPlace(effect: number | string) {
-    return typeof effect == 'string' ? effect : String(Math.round(effect * 10) / 10);
+function rounded(effect: number) {
+    return String(Math.round(effect * 100) / 100);
 }
+
+const noMitigation = Symbol("noMitigation");
 
 export function convertToDot(parsed: Input): RenderedOutput {
     const font = 'Arial'
@@ -318,7 +320,7 @@ digraph {
         public readonly type: NodeType;
         public readonly label: string;
         public readonly from: From[];
-        private risk?: Risk;
+        private riskScenarios: { [omitMitigation: string | symbol]: Risk } = {};
 
         protected constructor(type: NodeType, node: NodeDeclaration) {
             if (typeof node != "object" || node === null) {
@@ -333,41 +335,61 @@ digraph {
             allNodes[this.name] = this;
         }
 
-        getRisk(): Risk {
-            if (this.risk == null) {
-                this.risk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
-                const calc = new CalcRisk(this.risk);
+        getRisk(omitMitigation: string | symbol = noMitigation): Risk {
+            if (this.riskScenarios[omitMitigation] == null) {
+                const myRisk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
+                this.riskScenarios[omitMitigation] = myRisk;
+                const calc = new CalcRisk(myRisk);
                 // Incoming attack/fact risks and effects on the risk
                 // If nothing is sufficient, risk is nothing
                 if (this.from.some(from => from.sufficient)) {
                     for (let from of this.from) {
                         if (!from.backwards) {
-                            const risk = allNodes[from.name]?.getRisk();
-                            if (risk?.calc === "#REC!")
-                                return this.risk;
+                            const theirRisk = allNodes[from.name]?.getRisk(omitMitigation);
+                            if (theirRisk?.calc === "#REC!")
+                                return myRisk; // Abort recursion
                             calc[from.required ? "and" : "or"](
-                                risk?.value, this.incomingRiskEffect(from));
+                                theirRisk?.value, this.incomingRiskEffect(from));
                         }
                     }
                 }
                 // Outgoing mitigation effects (no inherent risks)
                 for (let toNode of Object.values(allNodes)) {
                     for (let from of toNode.from) {
-                        if (from.name === this.name) {
+                        if (toNode.name !== omitMitigation && from.name === this.name) {
                             calc.and(toNode.outgoingRiskEffect(from));
                         }
                     }
                 }
-                this.risk.calc = calc.toString() || oneDecPlace(this.risk.value);
+                myRisk.calc = calc.toString() || rounded(myRisk.value);
             }
-            return this.risk;
+            return this.riskScenarios[omitMitigation];
+        }
+
+        displayRisk(): string {
+            // Default is to show risk probability
+            let value: string;
+            switch (parsed.risk) {
+                case "value":
+                    if (this.getRisk().value > 1)
+                        value = ">1!";
+                    else
+                        value = rounded(this.getRisk().value);
+                    break;
+                case "calc":
+                    value = this.getRisk().calc;
+                    break;
+                default:
+                    value = `#${parsed.risk}?`;
+            }
+            return `ℙ:${value}`;
         }
 
         // Most node types have incoming effects
         protected incomingRiskEffect(from: From): number | undefined {
             return from.effect ?? 1;
         }
-        protected outgoingRiskEffect(from: From): number | undefined {
+        protected outgoingRiskEffect(_from: From): number | undefined {
             return undefined;
         }
     }
@@ -390,6 +412,17 @@ digraph {
     class Mitigation extends Node {
         constructor(node: NodeDeclaration) {
             super("mitigation", node);
+        }
+        displayRisk() {
+            // Mitigations display their value in preventing goals
+            let value = 0, count = 0;
+            for (let goal of Object.values(allNodes)) {
+                if (goal.type === "goal") {
+                    value += goal.getRisk(this.name).value - goal.getRisk(noMitigation).value;
+                    count++;
+                }
+            }
+            return `𝛿:${rounded(value / count)}`;
         }
         // A mitigation effect is outgoing
         protected incomingRiskEffect() {
@@ -471,7 +504,7 @@ digraph {
         .filter(node => shouldShow(node.name))
         .map(node => line(mangleName(node.name), {
             label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
-                (parsed.risk ? `\n<${oneDecPlace(node.getRisk()[parsed.risk])}>` : ""),
+                "\n" + node.displayRisk(),
             ...node.name === "reality" ? propertiesOfReality : {
                 fillcolor: theme[`${node.type}-fill`],
                 fontcolor: theme[`${node.type}-text`] || "black",
@@ -494,7 +527,7 @@ digraph {
                     } else {
                         props.xlabel = "";
                     }
-                    props.xlabel += `<${(oneDecPlace(effect))}>`;
+                    props.xlabel += `<${(rounded(effect))}>`;
                 }
                 if (effect === 0) {
                     props.style = "dotted";
