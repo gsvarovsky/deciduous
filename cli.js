@@ -1,14 +1,15 @@
-import { convertToDot, embedDotComment, embedSvgComment, trailingPngComment, parseEmbeddedComment } from "./layout.js";
+import { convertToDot, convertToTable, embedDotComment, embedSvgComment, trailingPngComment, parseEmbeddedComment } from "./layout.js";
 
 import { load } from "js-yaml";
 import { promises as fs } from "node:fs";
 import { Buffer } from "node:buffer";
 import { Graphviz } from "@hpcc-js/wasm";
 import svg2img from "svg2img";
+import { stringify } from "csv-stringify/sync";
 
 const args = process.argv.slice(2);
 
-if (args.length != 2) {
+if (args.length !== 2) {
 	console.log("usage: deciduous input.yaml output.svg\n   or: deciduous input.yaml output.dot");
 	process.exit(1);
 }
@@ -22,9 +23,10 @@ function fileExtension(path) {
 		case ".dot":
 		case ".png":
 		case ".yaml":
+		case ".csv":
 			return result;
 		default:
-			throw new Error(`invalid file path: ${path}; only support .svg, .dot, .png, and .yaml`);
+			throw new Error(`invalid file path: ${path}; only support .svg, .dot, .png, .yaml and .csv`);
 	}
 }
 
@@ -50,7 +52,6 @@ switch (fileExtension(inputFile)) {
 }
 
 const parsed = load(newInput);
-const { dot } = convertToDot(parsed);
 
 function svgtoimgAsync(args) {
 	return new Promise((resolve, reject) => {
@@ -70,21 +71,29 @@ switch (fileExtension(outputFile)) {
 		break;
 	}
 	case ".dot": {
+		const { dot } = convertToDot(parsed);
 		const branded = embedDotComment(dot, newInput);
 		await fs.writeFile(outputFile, branded, "utf-8");
 		break;
 	}
 	case ".svg": {
+		const { dot } = convertToDot(parsed);
 		const svg = (await graphviz).layout(dot, "svg", "dot");
 		const branded = embedSvgComment(svg, newInput);
 		await fs.writeFile(outputFile, branded, "utf-8");
 		break;
 	}
 	case ".png": {
+		const { dot } = convertToDot(parsed);
 		const svg = (await graphviz).layout(dot, "svg", "dot");
 		const png = await svgtoimgAsync(svg);
 		const branded = Buffer.concat([png, Buffer.from(trailingPngComment(newInput))]);
 		await fs.writeFile(outputFile, branded);
+		break;
+	}
+	case ".csv": {
+		const table = convertToTable(parsed);
+		await fs.writeFile(outputFile, stringify(table), "utf-8");
 		break;
 	}
 }
