@@ -167,8 +167,8 @@ class CalcRisk {
     }
 
     toString() {
-        let calcIn = this.ors.join(",");
-        calcIn &&= this.ors.length > 1 ? `max(${calcIn})` : calcIn;
+        let calcIn = this.ors.join("+");
+        calcIn &&= this.ors.length > 1 ? `(${calcIn})` : calcIn;
         const calcOut = this.ands.join("×");
         return [calcIn, calcOut].filter(s => s).join("×");
     }
