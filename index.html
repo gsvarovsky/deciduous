@@ -548,7 +548,9 @@ filter:
             highlighting.scrollLeft = inputSource.scrollLeft;
         }
         function matchTitle(title) {
-            return new RegExp(`(-\\s+)(["'])?${title}\\b\\2`, "g");
+            // Match identifier at start of line with optional quotes
+            // Doesn't work for JSON array notation
+            return new RegExp(`(^\\s*-\\s+)(["'])?${title}\\b\\2`, "gm");
         }
         function findTitle(yaml, title, from) {
             const index = (from == null ? yaml : yaml.slice(from)).search(matchTitle(title));
