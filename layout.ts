@@ -374,16 +374,29 @@ class Attack extends Node {
 }
 
 class Mitigation extends Node {
+    private priority = -1;
     constructor(node: NodeDeclaration, allNodes: NodeGraph) {
         super(node, "mitigation", allNodes);
     }
     getPriority() {
-        let value = 0, count = 0;
-        for (let goal of this.graph.goals) {
-            value += goal.getRisk(this.name).value - goal.getRisk(noMitigation).value;
-            count++;
+        if (this.priority == -1) {
+            // Mitigation Priority is the average effect on attacker goals
+            let value = 0, count = 0;
+            for (let goal of this.graph.goals) {
+                value += goal.getRisk(this.name).value - goal.getRisk(noMitigation).value;
+                count++;
+            }
+            this.priority = value / count;
+            // Inherit the priority of dependent  mitigations
+            for (let toNode of this.graph.all) {
+                for (let from of toNode.from) {
+                    if (toNode.type === "mitigation" && from.name === this.name) {
+                        this.priority += toNode.getPriority();
+                    }
+                }
+            }
         }
-        return value / count;
+        return this.priority;
     }
     getDisplayValue() {
         // Mitigations display their value in preventing goals
