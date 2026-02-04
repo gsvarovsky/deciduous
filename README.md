@@ -1,5 +1,5 @@
 # Deciduous
-A web app that simplifies building decision trees to model adverse scenarios. Hosted at https://www.deciduous.app/
+A web app that simplifies building decision trees to model adverse scenarios. Hosted at https://deciduous.vercel.app/
 
 It allows you to document your assumptions about how a system, service, app, etc. will respond to adverse events. Its heritage is in helping defenders anticipate attacker behavior and prepare mitigations accordingly, but it also applies to anticipating reliability-related failures, too.
 
@@ -14,6 +14,23 @@ Theme options include:
 - `theme: dark` - dark mode
 
 For a more detailed write-up of using decision trees in practice, refer to the book [_Security Chaos Engineering: Sustaining Resilience in Software and Systems._](https://www.securitychaoseng.com/)
+
+### Risks and Priorities
+
+The UCL version of Deciduous adds in a number of usability improvements that should be largely intuitive, plus the calculations of risks as follows.
+
+Risks can be shown in the diagram by assigning a top-level key `risk: value`.
+
+Risks are shown for fact, attack and goal nodes in the node display with the prefix "ℙ:" (for probability). For mitigations, risks also exist, but since a risk for a mitigation only exists to pass down to further attacks, the display instead shows the cumulative effect of the mitigation on the goals. This value is shown with the prefix "𝛿:" (for delta probability).
+
+The linkage between nodes can be assigned an _effect_. The easiest way to do this is to add a label to the `from`, suffixed with a value in angle brackets thus: `- from_node_id: Label <1>`. An effect value must be between zero and one. (It's also possible to add an `effect` sub-key to the individual `from` value.)
+
+Effect values cascade down the tree from `facts` to the attacker's `goals`, changing the risk value assigned to graph nodes. By default, all nodes have a risk of 1. This is most easy to interpret for `facts`: since facts are true, the risk of the fact being true is 1. From their initial values, risks are affected by effect values as follows:
+
+1. Effect values in the _froms_ of a fact, attack or goal node affect the risk of the node itself. The risk of each _from_ node are multiplied by the effect, combining with an exclusive OR (thus, the risks are added).
+2. Effect values in the _froms_ of a mitigation node affect the _from_ node, reducing its risk by the effect value (calculated by multiplying the risk by `1 - effect`).
+
+Since this calculation is not always easy to interpret, the top-level `risk` key can be set to `risk: calc`, the diagram then showing the risk calculation in place of the value.
 
 ## Examples
 Example trees for #inspo are hosted in [/examples](./examples).

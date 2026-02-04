@@ -510,11 +510,11 @@ filter:
                 <div id="importWrapper" class="dropdownWrapper">
                     <a href="#" id="importHoverArea" class="dropdownHoverArea">Import</a>
                     <ul>
-                        <li><a id="openGistLink" href="#">From GitHub Gist</a></li>
+                        <li><a id="openGitHubLink" href="#">From GitHub</a></li>
                         <li><a id="openLocalFileLink" href="#">From Local File</a></li>
                     </ul>
                 </div>
-                <a href="https://github.com/rpetrich/deciduous#deciduous">GitHub Repo</a>
+                <a href="https://github.com/gsvarovsky/deciduous#deciduous">GitHub Repo</a>
             </div>
         </div>
         <div id="errorTarget">JavaScript is required</div>
@@ -539,7 +539,7 @@ filter:
         const downloadYAMLLink = document.getElementById("downloadYAMLLink");
         const downloadPngLink = document.getElementById("downloadPngLink");
         const downloadSvgLink = document.getElementById("downloadSvgLink");
-        const openGistLink = document.getElementById("openGistLink");
+        const openGitHubLink = document.getElementById("openGitHubLink");
         const openLocalFileLink = document.getElementById("openLocalFileLink");
         const inputHighlighted = document.getElementById("inputHighlighted");
         const highlighting = document.getElementById("highlighting");
@@ -985,34 +985,39 @@ filter:
                 }
             }, false);
             function tryHashRender() {
-                const match = location.hash.match(/^#gist=(\w+)$/);
+                let match = location.hash.match(/^#gist=(\w+)$/);
                 if (match) {
                     const url = `https://api.github.com/gists/${match[1]}`;
                     inputSource.value = `# Loading ${url}`;
                     fetch(url).then(response => response.json()).then(json => {
                         const files = json.files;
+                        function content(key) {
+                            const file = files[key];
+                            if (file.truncated) {
+                                return fetch(file.raw_url).then(fileResponse => fileResponse.text());
+                            } else {
+                                return files[key].content;
+                            }
+                        }
                         for (const key in files) {
                             if (/\.yaml$/.test(key)) {
-                                const file = files[key];
-                                if (file.truncated) {
-                                    return fetch(file.raw_url).then(fileResponse => fileResponse.text());
-                                } else {
-                                    return files[key].content;
-                                }
+                                return content(key);
                             }
                         }
                         for (const key in files) {
                             if (/\.(yaml|svg)$/.test(key)) {
-                                const file = files[key];
-                                if (file.truncated) {
-                                    return fetch(file.raw_url).then(fileResponse => fileResponse.text());
-                                } else {
-                                    return files[key].content;
-                                }
+                                return content(key);
                             }
                         }
                         return `# No yaml in gist ID ${match[1]}`;
                     }).catch(e => `# Error loading ${url}: ${e}`).then(importText);
+                } else {
+                    match = location.hash.match(/^#gh=(\S+)$/);
+                    if (match) {
+                        const url = `https://raw.githubusercontent.com/${decodeURIComponent(match[1])}`;
+                        inputSource.value = `# Loading ${url}`;
+                        fetch(url).then(res => res.text()).catch(e => `# Error loading ${url}: ${e}`).then(importText);
+                    }
                 }
             }
             tryHashRender();
@@ -1036,20 +1041,23 @@ filter:
                 rerender();
             });
             rerender();
-            openGistLink.addEventListener("click", (event) => {
+            openGitHubLink.addEventListener("click", (event) => {
                 event.preventDefault();
-                const value = window.prompt("GitHub Gist URL or ID:", "");
+                const value = window.prompt("GitHub Gist link, Gist ID, or permalink:", "");
                 if (/^[0-9a-f]+$/.test(value)) {
                     location.hash = `#gist=${value}`;
-                } else {
-                    const match = value.match(/^https:\/\/gist\.github\.com\/\w+\/([0-9a-f]+)$/);
-                    if (match) {
-                        location.hash = `#gist=${match[1]}`;
-                    } else {
-                        return;
-                    }
+                    return tryHashRender();
                 }
-                tryHashRender();
+                let match = value.match(/^https:\/\/gist\.github\.com\/\w+\/([0-9a-f]+)$/);
+                if (match) {
+                    location.hash = `#gist=${match[1]}`;
+                    return tryHashRender();
+                }
+                match = value.match(/^https:\/\/github.com\/([^\/]+)\/([^\/]+)\/blob\/(\S+)$/);
+                if (match) {
+                    location.hash = `#gh=${encodeURIComponent(match.slice(1).join("/"))}`;
+                    return tryHashRender();
+                }
             }, false);
             openLocalFileLink.addEventListener("click", (event) => {
                 event.preventDefault();
