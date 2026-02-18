@@ -568,6 +568,9 @@ filter:
             if (findTitle(yaml, maybeTitle))
                 return maybeTitle;
         }
+        function withoutFroms(value) {
+            return value.replace(/\n([^\S\n]*)from:(\s+\1.+)*/g, match => ' '.repeat(match.length));
+        }
         window["@hpcc-js/wasm"].graphvizSync().then(graphviz => {
             let lastInput = "";
             let lastWithoutFroms = "";
@@ -592,7 +595,7 @@ filter:
                 if (newInput !== lastInput) {
                     lastInput = newInput;
                     // Cache a version of the input that omits 'from' references
-                    lastWithoutFroms = lastInput.replace(/\n([^\S\n]*)from:(\s+\1.+)*/g, match => ' '.repeat(match.length));
+                    lastWithoutFroms = withoutFroms(lastInput);
                     if (window.localStorage) {
                         localStorage.setItem("deciduous-content", newInput);
                     }
@@ -807,9 +810,14 @@ filter:
                 if (prev) {
                     const next = titleAt(inputSource.value, selectionEnd);
                     if (next && next !== prev) {
+                        const newWithoutFroms = withoutFroms(inputSource.value);
                         const diffLen = next.length - prev.length;
                         const match = matchTitle(prev);
                         inputSource.value = inputSource.value.replaceAll(match, (match, pre, quote, offset) => {
+                            // Only match froms
+                            if (newWithoutFroms.substring(offset, offset + match.length) === match) {
+                                return match;
+                            }
                             if (offset < selectionStart) {
                                 selectionStart += diffLen;
                                 selectionEnd += diffLen;
