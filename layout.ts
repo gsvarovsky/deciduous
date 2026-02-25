@@ -270,7 +270,7 @@ export type RenderedOutput = {
     themeName: string;
 };
 
-function rounded(effect: number, dp = 2) {
+function rounded(effect: number, dp = 4) {
     const pow = Math.pow(10, dp);
     return String(Math.round(effect * pow) / pow);
 }
@@ -737,10 +737,9 @@ export function convertToTable(parsed: Input) {
         const row = [node.type, node.name, node.label];
         if (parsed.risk != null) {
             const risk = node.getRisk();
-            const dp = 4; // More accurate risks for table output
             row.push(
-                parsed.risk === "value" ? rounded(risk.value, dp) : risk[parsed.risk],
-                rounded(node.getPriority(), dp)
+                parsed.risk === "value" ? rounded(risk.value) : risk[parsed.risk],
+                rounded(node.getPriority())
             );
         }
         table.push(row);
