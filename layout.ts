@@ -140,37 +140,89 @@ type Theme = {
     "goal-text": string;
 };
 
-class CalcRisk {
-    private readonly ors: string[] = [];
-    private readonly ands: string[] = [];
+function opListString(operator: string, operands: string[]) {
+    return operands.length ? operands.length > 1 ? `(${operands.join(operator)})` : operands[0] : "";
+}
 
-    constructor(readonly risk: Risk) {
-    }
+type RiskConditions = (number | undefined)[];
 
-    or(...values: (number | undefined)[]) {
-        // Don't know if they're independent, so take the max
-        this.risk.value += this.push("ors", values);
-    }
-
-    and(...values: (number | undefined)[]) {
-        this.risk.value *= this.push("ands", values);
-    }
-
-    private push(dir: "ors" | "ands", values: (number | undefined)[]) {
-        let definedValues = values.filter((value): value is number => value != null);
-        if (definedValues.length) {
-            this[dir].push(definedValues.length > 1 ?
-                `(${definedValues.map(rounded).join("×")})` :
-                rounded(definedValues[0]));
+function riskAtom(conditions: RiskConditions): Risk | undefined {
+    const numbers = conditions.filter(
+        (value): value is number => value != null);
+    if (numbers.length) {
+        return {
+            value: numbers.reduce((final, value) => value * final, 1),
+            calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(rounded))
         }
-        return definedValues.reduce((acc, risk) => acc * risk, 1);
+    }
+}
+
+class CalcRisk implements Readonly<Risk> {
+    private ors: RiskConditions[] = [];
+    private ands: RiskConditions[] = [];
+    private final?: Risk;
+
+    constructor(fact: boolean) {
+        if (fact) {
+            this.ors.push([1]);
+        }
     }
 
-    toString() {
-        let calcIn = this.ors.join("+");
-        calcIn &&= this.ors.length > 1 ? `(${calcIn})` : calcIn;
-        const calcOut = this.ands.join("×");
-        return [calcIn, calcOut].filter(s => s).join("×");
+    or(...conditions: RiskConditions) {
+        if (this.final != null)
+            throw new Error("Calculation finalised");
+        this.ors.push(conditions);
+    }
+
+    and(...conditions: RiskConditions) {
+        if (this.final != null)
+            throw new Error("Calculation finalised");
+        this.ands.push(conditions);
+    }
+
+    get value() {
+        if (this.final == null)
+            throw "#REC!";
+        return this.final.value;
+    }
+
+    get calc() {
+        if (this.final == null)
+            throw "#REC!";
+        return this.final.calc;
+    }
+
+    finalRecursive() {
+        this.final = {value: 0, calc: "#REC!"};
+        return this;
+    }
+
+    finalOk() {
+        const orCalc: string[] = [];
+        let orValue = 0;
+        for (let conditions of this.ors) {
+            const risk = riskAtom(conditions);
+            if (risk != null) {
+                orValue += risk.value;
+                orCalc.push(risk.calc);
+            }
+        }
+        const andCalc: string[] = [];
+        let andValue = 1;
+        for (let conditions of this.ands) {
+            const risk = riskAtom(conditions);
+            if (risk != null) {
+                andValue *= risk.value;
+                andCalc.push(risk.calc);
+            }
+        }
+        this.final = {
+            value: (orCalc.length ? orValue : 1) * (andCalc.length ? andValue : 1),
+            calc: [
+                opListString("+", orCalc),
+                opListString("×", andCalc)
+            ].filter(s => s).join("×")
+        };
     }
 }
 
@@ -270,8 +322,8 @@ export type RenderedOutput = {
     themeName: string;
 };
 
-function rounded(effect: number, dp = 4) {
-    const pow = Math.pow(10, dp);
+function rounded(effect: number) {
+    const pow = Math.pow(10, 4);
     return String(Math.round(effect * pow) / pow);
 }
 
@@ -297,19 +349,23 @@ abstract class Node {
 
     getRisk(omitMitigation: string | symbol = noMitigation): Risk {
         if (this.riskScenarios[omitMitigation] == null) {
-            const myRisk = {value: this.from.length ? 0 : 1, calc: "#REC!"};
-            this.riskScenarios[omitMitigation] = myRisk;
-            const calc = new CalcRisk(myRisk);
+            const calc = new CalcRisk(this.from.length === 0);
+            this.riskScenarios[omitMitigation] = calc;
             // Incoming attack/fact risks and effects on the risk
             // If nothing is sufficient, risk is nothing
             if (this.from.some(from => from.sufficient)) {
                 for (let from of this.from) {
                     if (!from.backwards) {
-                        const theirRisk = this.graph.get(from.name)?.getRisk(omitMitigation);
-                        if (theirRisk?.calc === "#REC!")
-                            return myRisk; // Abort recursion
-                        calc[from.required ? "and" : "or"](
-                            theirRisk?.value, this.incomingRiskEffect(from));
+                        try {
+                            const theirRisk = this.graph.get(from.name)?.getRisk(omitMitigation);
+                            (from.required ? calc.and : calc.or).call(
+                                calc, theirRisk?.value, this.incomingRiskEffect(from));
+                        } catch (e) {
+                            if (e === "#REC!")
+                                return calc.finalRecursive();
+                            else
+                                throw e;
+                        }
                     }
                 }
             }
@@ -321,7 +377,7 @@ abstract class Node {
                     }
                 }
             }
-            myRisk.calc = calc.toString() || rounded(myRisk.value);
+            calc.finalOk();
         }
         return this.riskScenarios[omitMitigation];
     }
@@ -507,7 +563,7 @@ digraph {
             }
             const others: string[] | undefined = forwards[cur];
             if (others !== undefined) {
-                for (const other of others) {
+                for (let other of others) {
                     if (!Object.hasOwnProperty.call(added, other)) {
                         added[other] = true;
                         search.push(other);
