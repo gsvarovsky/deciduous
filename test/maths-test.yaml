@@ -1,0 +1,26 @@
+theme: default
+risk: value
+
+attacks:
+  - a:
+    from:
+      - reality: <0.9>
+  - d:
+    from:
+      - a: <0.5>
+  - e:
+    from:
+      - d: <1>
+  - f:
+    from:
+      - d: <1>
+      - h: <0.1>
+  - g:
+    from:
+      - e:
+        required: true
+      - f:
+        required: true
+  - h:
+    from:
+      - a: <0.5>
