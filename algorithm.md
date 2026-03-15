@@ -1,5 +1,5 @@
 
-node(options, requires) = E<and>(E<or>(options), E<and>(requires))
+node(options, requires) = E<and>(E<or>(options), ...requires)
 
 p(E<and>) = DEPAND(E.froms)
 

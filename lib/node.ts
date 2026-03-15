@@ -30,6 +30,8 @@ export const defaultFrom: Omit<From, "name"> = {
     effect: undefined
 };
 
+type Cut = Set<Node>;
+
 export class Node {
     private riskScenarios: { [scenarioKey: string | symbol]: Risk } = {};
     private cutCalcs: {[token: symbol]: true} = {};
@@ -56,49 +58,59 @@ export class Node {
     ) {}
 
     /**
-     * Always returns at least [Set(this)]
+     * Always yields at least [Set(this)]
      */
-    *cuts(token = Symbol()): Generator<Set<Node>> {
+    *cuts(token = Symbol()): Generator<Cut> {
         if (this.cutCalcs.hasOwnProperty(token))
             return;
         this.cutCalcs[token] = true;
-        // Every required cut is combined with every option cut
-        const requiredCuts: Set<Node>[] = [];
-        for (let from of this.riskFroms()) {
-            if (from.required) {
-                for (let cut of this.fromCuts(from, token))
-                    requiredCuts.push(new Set(cut));
-            }
-        }
+        // (1 AND a AND c) OR (1 AND a AND d) OR ...
+        const cutIntersection = [...cartesian(this.cutUnion(token))];
         let yielded = false;
-        for (let from of this.riskFroms()) {
-            if (!from.required) {
-                for (let optionCut of this.fromCuts(from, token)) {
-                    yield* this.optionCuts(cartesian(requiredCuts), optionCut);
-                    yielded = true;
-                }
-            }
+        for (let cuts of cutIntersection) {
+            yield new Set(Array<Node>(this).concat(...cuts.map(cut => [...cut])));
+            yielded = true;
         }
-        // There were no option cuts
+        // There were no from cuts
         if (!yielded)
-            yield* this.optionCuts(cartesian(requiredCuts));
+            yield new Set([this]);
         delete this.cutCalcs[token];
     }
 
-    private *fromCuts(from: From, token: symbol) {
-        const fromNode = this.graph.get(from.name);
-        if (fromNode != null)
-            yield *fromNode.cuts(token);
+    /**
+     * [opt1 OR opt2] AND [req1] AND [req2]
+     */
+    private fromUnion(): Node[][] {
+        const options: Node[] = [];
+        const union: Node[][] = [options];
+        for (let from of this.riskFroms()) {
+            const fromNode = this.graph.get(from.name);
+            if (fromNode != null) {
+                if (from.required) {
+                    union.push([fromNode]);
+                } else {
+                    options.push(fromNode);
+                }
+            }
+        }
+        // If there were no options we still want the required
+        if (!options.length)
+            union.shift();
+        return union;
     }
 
-    private* optionCuts(requiredCuts: Iterable<Node[]>, optionCut: Iterable<Node> = []) {
-        let yielded = false;
-        for (let requiredCut of requiredCuts) {
-            yield new Set([this, ...requiredCut, ...optionCut]);
-            yielded = true;
-        }
-        if (!yielded)
-            yield new Set([this, ...optionCut]);
+    /**
+     * ((1 OR 2) OR (3 OR 4)) AND (a OR b) AND (c OR d)
+     * where 1-4 are cuts of options and a-d are cuts of required
+     */
+    private cutUnion(token: symbol) {
+        // Translate every from node to a set of cuts
+        return this.fromUnion().map(nodes => {
+            const cuts: Cut[] = [];
+            for (let node of nodes)
+                cuts.push(...node.cuts(token));
+            return cuts;
+        });
     }
 
     *riskFroms() {
@@ -113,38 +125,35 @@ export class Node {
 
     getRisk(scenario: Scenario = Scenario.none): Risk {
         if (this.riskScenarios[scenario.key] == null) {
-            const calc = new AndRisk();
-            const orCalc = new OrRisk(this.from.length === 0);
             const andCalc = new AndRisk();
-            this.riskScenarios[scenario.key] = calc;
-            // Incoming attack/fact risks and effects on the risk
-            // If nothing is sufficient, risk is nothing
-            for (let from of this.riskFroms()) {
-                try {
+            this.riskScenarios[scenario.key] = andCalc;
+            try {
+                const orCalc = new OrRisk(this.from.length === 0);
+                andCalc.add(orCalc);
+                // Incoming attack/fact risks and effects on the risk
+                for (let from of this.riskFroms()) {
                     const theirRisk = this.graph.get(from.name)?.getRisk(scenario);
-                    let incomingEffect = this.incomingRiskEffect(from);
+                    const incomingEffect = this.incomingRiskEffect(from);
                     if (from.required) {
                         andCalc.add([theirRisk?.value, incomingEffect]);
                     } else {
                         orCalc.add([theirRisk?.value, incomingEffect]);
                     }
-                } catch (e) {
-                    if (e === "#REC!")
-                        return calc.finalRecursive();
-                    throw e;
                 }
-            }
-            // Outgoing mitigation effects (no inherent risks)
-            for (let toNode of this.graph.all) {
-                for (let from of toNode.from) {
-                    if (toNode.name !== scenario.omit?.name && from.name === this.name) {
-                        andCalc.add([toNode.outgoingRiskEffect(from)]);
+                // Outgoing mitigation effects (no inherent risks)
+                for (let toNode of this.graph.all) {
+                    for (let from of toNode.from) {
+                        if (toNode.name !== scenario.omit?.name && from.name === this.name) {
+                            andCalc.add([toNode.outgoingRiskEffect(from)]);
+                        }
                     }
                 }
+                andCalc.finalOk();
+            } catch (e) {
+                if (e === "#REC!")
+                    return andCalc.finalRecursive();
+                throw e;
             }
-            calc.add(orCalc.finalOk());
-            calc.add(andCalc.finalOk());
-            calc.finalOk();
         }
         return this.riskScenarios[scenario.key];
     }

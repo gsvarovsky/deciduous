@@ -3,14 +3,14 @@ function opListString(operator: string, operands: string[]) {
 }
 
 type RiskEffect = [inherent?: number, effect?: number];
-type RiskCondition = RiskEffect | Risk;
+type RiskCondition = RiskEffect | CalcRisk;
 
 export interface Risk {
     value: number;
     calc: string;
 }
 
-function riskAtom(condition: RiskCondition): Risk | undefined {
+function riskAtom(condition: RiskEffect | Risk): Risk | undefined {
     if (Array.isArray(condition)) {
         const numbers = condition.filter(
             (value): value is number => value != null);
@@ -28,13 +28,16 @@ function riskAtom(condition: RiskCondition): Risk | undefined {
 }
 
 abstract class CalcRisk implements Readonly<Risk> {
-    protected risks: RiskCondition[] = [];
     private final?: Risk;
 
-    add(conditions: RiskCondition) {
+    constructor(
+        private conditions: RiskCondition[] = []
+    ) {}
+
+    add(condition: RiskCondition) {
         if (this.final != null)
             throw new Error("Calculation finalised");
-        this.risks.push(conditions);
+        this.conditions.push(condition);
     }
 
     get value() {
@@ -55,26 +58,24 @@ abstract class CalcRisk implements Readonly<Risk> {
     }
 
     finalOk() {
-        this.final = this.calcFinal();
+        this.final = this.calcFinal(this.conditions.map(risk =>
+            risk instanceof CalcRisk ? risk.finalOk() : risk));
         return this;
     }
 
-    protected abstract calcFinal(): Risk;
+    protected abstract calcFinal(conditions: (RiskEffect | Risk)[]): Risk;
 }
 
 export class OrRisk extends CalcRisk {
     constructor(fact: boolean) {
-        super();
-        if (fact) {
-            this.risks.push([1]);
-        }
+        super(fact ? [[1]] : []);
     }
 
-    calcFinal(): Risk {
+    calcFinal(conditions: (RiskEffect | Risk)[]): Risk {
         const orCalc: string[] = [];
         let orValue = 0;
-        for (let conditions of this.risks) {
-            const risk = riskAtom(conditions);
+        for (let condition of conditions) {
+            const risk = riskAtom(condition);
             if (risk != null) {
                 orValue += risk.value;
                 orCalc.push(risk.calc);
@@ -88,11 +89,11 @@ export class OrRisk extends CalcRisk {
 }
 
 export class AndRisk extends CalcRisk {
-    calcFinal(): Risk {
+    calcFinal(conditions: (RiskEffect | Risk)[]): Risk {
         const andCalc: string[] = [];
         let andValue = 1;
-        for (let conditions of this.risks) {
-            const risk = riskAtom(conditions);
+        for (let condition of conditions) {
+            const risk = riskAtom(condition);
             if (risk != null) {
                 andValue *= risk.value;
                 andCalc.push(risk.calc);
