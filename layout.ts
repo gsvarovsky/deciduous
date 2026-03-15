@@ -1,3 +1,8 @@
+
+import {rounded} from "./lib/util.js";
+import {From, FromFlags, Mitigation, Node} from "./lib/node.js";
+import {NodeGraph} from "./lib/graph.js";
+
 export const themes: { [name: string]: Theme } = {
     "classic": {
         "dark": false,
@@ -94,31 +99,8 @@ export interface EffectDeclaration {
     likelihood?: number; // Generally for attacks
 }
 
-export interface EffectFlags {
-    required: boolean; // Default false
-    sufficient: boolean; // Default true
-}
-
 export type FromDeclaration = string |
     (Partial<FromFlags> & EffectDeclaration & { [name: string]: string | number | null; });
-
-export interface FromFlags extends EffectFlags {
-    backwards: boolean; // Default false
-    ungrouped: boolean; // Default false
-}
-
-export type From = FromFlags & {
-    name: string;
-    effect: number | undefined;
-    label?: "#yolosec" | string;
-};
-
-export interface Risk {
-    value: number;
-    calc: string;
-}
-
-type NodeType = "attack" | "mitigation" | "fact" | "goal";
 
 type Theme = {
     "dark"?: boolean;
@@ -139,92 +121,6 @@ type Theme = {
     "goal-fill": string;
     "goal-text": string;
 };
-
-function opListString(operator: string, operands: string[]) {
-    return operands.length ? operands.length > 1 ? `(${operands.join(operator)})` : operands[0] : "";
-}
-
-type RiskConditions = (number | undefined)[];
-
-function riskAtom(conditions: RiskConditions): Risk | undefined {
-    const numbers = conditions.filter(
-        (value): value is number => value != null);
-    if (numbers.length) {
-        return {
-            value: numbers.reduce((final, value) => value * final, 1),
-            calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(rounded))
-        }
-    }
-}
-
-class CalcRisk implements Readonly<Risk> {
-    private ors: RiskConditions[] = [];
-    private ands: RiskConditions[] = [];
-    private final?: Risk;
-
-    constructor(fact: boolean) {
-        if (fact) {
-            this.ors.push([1]);
-        }
-    }
-
-    or(...conditions: RiskConditions) {
-        if (this.final != null)
-            throw new Error("Calculation finalised");
-        this.ors.push(conditions);
-    }
-
-    and(...conditions: RiskConditions) {
-        if (this.final != null)
-            throw new Error("Calculation finalised");
-        this.ands.push(conditions);
-    }
-
-    get value() {
-        if (this.final == null)
-            throw "#REC!";
-        return this.final.value;
-    }
-
-    get calc() {
-        if (this.final == null)
-            throw "#REC!";
-        return this.final.calc;
-    }
-
-    finalRecursive() {
-        this.final = {value: 0, calc: "#REC!"};
-        return this;
-    }
-
-    finalOk() {
-        const orCalc: string[] = [];
-        let orValue = 0;
-        for (let conditions of this.ors) {
-            const risk = riskAtom(conditions);
-            if (risk != null) {
-                orValue += risk.value;
-                orCalc.push(risk.calc);
-            }
-        }
-        const andCalc: string[] = [];
-        let andValue = 1;
-        for (let conditions of this.ands) {
-            const risk = riskAtom(conditions);
-            if (risk != null) {
-                andValue *= risk.value;
-                andCalc.push(risk.calc);
-            }
-        }
-        this.final = {
-            value: (orCalc.length ? orValue : 1) * (andCalc.length ? andValue : 1),
-            calc: [
-                opListString("+", orCalc),
-                opListString("×", andCalc)
-            ].filter(s => s).join("×")
-        };
-    }
-}
 
 function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
     const entries = Object.entries(obj);
@@ -322,197 +218,30 @@ export type RenderedOutput = {
     themeName: string;
 };
 
-function rounded(effect: number) {
-    const pow = Math.pow(10, 4);
-    return String(Math.round(effect * pow) / pow);
+function parseNode(node: NodeDeclaration): [string, string, From[]] {
+    if (typeof node != "object" || node === null) {
+        throw new Error(`nodes must each be an object containing at least one property`);
+    }
+    const [name, label] = firstProperty<string>(node);
+    const from = (node.from ?? []).map(parseFrom);
+    return [name, label, from];
 }
 
-const noMitigation = Symbol("noMitigation");
-
-abstract class Node {
-    public readonly name: string;
-    public readonly label: string;
-    public readonly from: From[];
-    private riskScenarios: { [omitMitigation: string | symbol]: Risk } = {};
-
-    protected constructor(
-        node: NodeDeclaration,
-        readonly type: NodeType,
-        protected readonly graph: NodeGraph
-    ) {
-        if (typeof node != "object" || node === null) {
-            throw new Error(`nodes must each be an object containing at least one property`);
-        }
-        [this.name, this.label] = firstProperty<string>(node);
-        this.from = (node.from ?? []).map(parseFrom);
-    }
-
-    getRisk(omitMitigation: string | symbol = noMitigation): Risk {
-        if (this.riskScenarios[omitMitigation] == null) {
-            const calc = new CalcRisk(this.from.length === 0);
-            this.riskScenarios[omitMitigation] = calc;
-            // Incoming attack/fact risks and effects on the risk
-            // If nothing is sufficient, risk is nothing
-            if (this.from.some(from => from.sufficient)) {
-                for (let from of this.from) {
-                    if (!from.backwards) {
-                        try {
-                            const theirRisk = this.graph.get(from.name)?.getRisk(omitMitigation);
-                            (from.required ? calc.and : calc.or).call(
-                                calc, theirRisk?.value, this.incomingRiskEffect(from));
-                        } catch (e) {
-                            if (e === "#REC!")
-                                return calc.finalRecursive();
-                            else
-                                throw e;
-                        }
-                    }
-                }
-            }
-            // Outgoing mitigation effects (no inherent risks)
-            for (let toNode of this.graph.all) {
-                for (let from of toNode.from) {
-                    if (toNode.name !== omitMitigation && from.name === this.name) {
-                        calc.and(toNode.outgoingRiskEffect(from));
-                    }
-                }
-            }
-            calc.finalOk();
-        }
-        return this.riskScenarios[omitMitigation];
-    }
-
-    getPriority() {
-        return this.getRisk().value;
-    }
-
-    getDisplayValue(display: Input["risk"]): string {
-        // Default is to show risk probability
-        let value: string;
-        switch (display) {
-            case "value":
-                if (this.getRisk().value > 1)
-                    value = ">1!";
-                else
-                    value = rounded(this.getRisk().value);
-                break;
-            case "calc":
-                value = this.getRisk().calc;
-                break;
-            default:
-                value = `#${display}?`;
-        }
-        return `ℙ:${value}`;
-    }
-
-    // Most node types have incoming effects
-    protected incomingRiskEffect(from: From): number | undefined {
-        return from.effect ?? 1;
-    }
-    protected outgoingRiskEffect(_from: From): number | undefined {
-        return undefined;
-    }
-}
-
-class Fact extends Node {
-    constructor(node: NodeDeclaration, allNodes: NodeGraph) {
+function parseInput(parsed: Input): NodeGraph {
+    const graph = new NodeGraph();
+    (parsed.facts || []).forEach(node => {
         if (!node.from?.length) {
             node.from = ["reality"];
         }
-        super(node, "fact", allNodes);
-    }
-}
-
-class Attack extends Node {
-    constructor(node: NodeDeclaration, allNodes: NodeGraph) {
-        super(node, "attack", allNodes);
-    }
-}
-
-class Mitigation extends Node {
-    private priority = -1;
-    constructor(node: NodeDeclaration, allNodes: NodeGraph) {
-        super(node, "mitigation", allNodes);
-    }
-    getPriority() {
-        if (this.priority == -1) {
-            // Mitigation Priority is the average effect on attacker goals
-            let value = 0, count = 0;
-            for (let goal of this.graph.goals) {
-                value += goal.getRisk(this.name).value - goal.getRisk(noMitigation).value;
-                count++;
-            }
-            this.priority = value / count;
-            // Inherit the priority of dependent  mitigations
-            for (let toNode of this.graph.all) {
-                for (let from of toNode.from) {
-                    if (toNode.type === "mitigation" && from.name === this.name) {
-                        this.priority += toNode.getPriority();
-                    }
-                }
-            }
-        }
-        return this.priority;
-    }
-    getDisplayValue() {
-        // Mitigations display their value in preventing goals
-        return `𝛿:${rounded(this.getPriority())}`;
-    }
-    protected incomingRiskEffect() {
-        return undefined;
-    }
-    // A mitigation effect is outgoing
-    protected outgoingRiskEffect(from: From) {
-        return 1 - (from.effect ?? 0); // effect is mitigating
-    }
-}
-
-class Goal extends Node {
-    constructor(node: NodeDeclaration, allNodes: NodeGraph) {
-        super(node, "goal", allNodes);
-    }
-}
-
-class NodeGraph {
-    private readonly allNodes: { [name: string]: Node } = {};
-    readonly forwards: { [name: string]: string[] } = {};
-    readonly forwardsAll: { [name: string]: string[] } = {};
-    readonly backwards: { [name: string]: string[] } = {};
-
-    constructor(parsed: Input) {
-        (parsed.facts || []).forEach(node => this.addNode(new Fact(node, this)));
-        (parsed.attacks || []).forEach(node => this.addNode(new Attack(node, this)));
-        (parsed.mitigations || []).forEach(node => this.addNode(new Mitigation(node, this)));
-        (parsed.goals || []).forEach(node => this.addNode(new Goal(node, this)));
-    }
-
-    get(name: string): Node | undefined {
-        return this.allNodes[name];
-    }
-
-    get all() {
-        return Object.values(this.allNodes);
-    }
-
-    get goals() {
-        return this.all.filter(goal => goal.type === "goal");
-    }
-
-    private addNode(node: Node) {
-        if (Object.hasOwnProperty.call(this.allNodes, node.name)) {
-            throw new Error(`${node.name} cannot be declared twice. It was previously declared as ${node.type}`);
-        }
-        this.allNodes[node.name] = node;
-        const fromNames = this.backwards[node.name] ??= [];
-        for (const from of node.from) {
-            if (!from.backwards && !from.ungrouped) {
-                (this.forwards[from.name] ??= []).push(node.name);
-                fromNames.push(from.name);
-            }
-            (this.forwardsAll[from.name] ??= []).push(node.name);
-        }
-        return node;
-    }
+        graph.addNode(new Node(...parseNode(node), "fact", graph));
+    });
+    (parsed.attacks || []).forEach(node =>
+        graph.addNode(new Node(...parseNode(node), "attack", graph)));
+    (parsed.mitigations || []).forEach(node =>
+        graph.addNode(new Mitigation(...parseNode(node), "mitigation", graph)));
+    (parsed.goals || []).forEach(node =>
+        graph.addNode(new Node(...parseNode(node), "goal", graph)));
+    return graph;
 }
 
 export function convertToDot(parsed: Input): RenderedOutput {
@@ -545,7 +274,7 @@ digraph {
 `;
     const filter = parsed.filter || [];
     const subgraphs = [];
-    const graph: NodeGraph = new NodeGraph(parsed);
+    const graph: NodeGraph = parseInput(parsed);
 
     function anyDominates(forwards: { [name: string]: string[] }, d: string[], n: string) {
         // search to see if any nodes in d dominate n
@@ -789,7 +518,7 @@ export function convertToTable(parsed: Input) {
         header.push(`risk.${parsed.risk}`, "priority");
     }
     const table = [header];
-    for (let node of new NodeGraph(parsed).all) {
+    for (let node of parseInput(parsed).all) {
         const row = [node.type, node.name, node.label];
         if (parsed.risk != null) {
             const risk = node.getRisk();

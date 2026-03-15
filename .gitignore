@@ -1,2 +1,3 @@
 layout.js
+lib/**/*.js
 node_modules
