@@ -1,6 +1,4 @@
-
-import {rounded} from "./lib/util.js";
-import {From, FromFlags, Mitigation, Node} from "./lib/node.js";
+import {defaultFrom, From, FromFlags, Node} from "./lib/node.js";
 import {NodeGraph} from "./lib/graph.js";
 
 export const themes: { [name: string]: Theme } = {
@@ -131,42 +129,36 @@ function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
 }
 
 function parseFrom(raw: FromDeclaration): From {
-    let name: string,
-        label: string | undefined,
-        backwards = false,
-        ungrouped = false,
-        required = false,
-        sufficient = true,
-        effect: number | undefined;
+    let from: From;
     if (typeof raw == "object") {
         const [fromName, rawLabel] = firstProperty(raw);
-        name = fromName;
+        from = {...defaultFrom, name: fromName};
         if (typeof rawLabel === "string" || typeof rawLabel === "number")
-            label = String(rawLabel);
+            from.label = String(rawLabel);
         if (typeof raw.backwards === "boolean")
-            backwards = raw.backwards;
+            from.backwards = raw.backwards;
         if (typeof raw.ungrouped === "boolean")
-            ungrouped = raw.ungrouped;
+            from.ungrouped = raw.ungrouped;
         if (typeof raw.required === "boolean")
-            required = raw.required;
+            from.required = raw.required;
         if (typeof raw.sufficient === "boolean")
-            sufficient = raw.sufficient;
-        effect =
+            from.sufficient = raw.sufficient;
+        from.effect =
             toEffect('effect', raw.effect) ??
             toEffect('implemented', raw.implemented) ??
             toEffect('likelihood', raw.likelihood) ??
-            (label === "#yolosec" ? 1 : undefined) ??
+            (from.label === "#yolosec" ? 1 : undefined) ??
             (function () {
-                const matchInlineEffect = label?.match(/\s*<(1|(0(\.\d+)?))>$/);
+                const matchInlineEffect = from.label?.match(/\s*<(1|(0(\.\d+)?))>$/);
                 if (matchInlineEffect != null) {
-                    label = label?.substring(0, matchInlineEffect.index);
+                    from.label = from.label?.substring(0, matchInlineEffect.index);
                     return Number(matchInlineEffect[1]);
                 }
             })();
     } else {
-        name = String(raw);
+        from = {...defaultFrom, name: String(raw)};
     }
-    return { name, label, backwards, ungrouped, effect, required, sufficient };
+    return from;
 }
 
 function toEffect(key: string, value?: any):number | undefined {
@@ -233,14 +225,14 @@ function parseInput(parsed: Input): NodeGraph {
         if (!node.from?.length) {
             node.from = ["reality"];
         }
-        graph.addNode(new Node(...parseNode(node), "fact", graph));
+        graph.add(Node.make(...parseNode(node), "fact", graph));
     });
     (parsed.attacks || []).forEach(node =>
-        graph.addNode(new Node(...parseNode(node), "attack", graph)));
+        graph.add(Node.make(...parseNode(node), "attack", graph)));
     (parsed.mitigations || []).forEach(node =>
-        graph.addNode(new Mitigation(...parseNode(node), "mitigation", graph)));
+        graph.add(Node.make(...parseNode(node), "mitigation", graph)));
     (parsed.goals || []).forEach(node =>
-        graph.addNode(new Node(...parseNode(node), "goal", graph)));
+        graph.add(Node.make(...parseNode(node), "goal", graph)));
     return graph;
 }
 
@@ -342,7 +334,7 @@ digraph {
                     } else {
                         props.xlabel = "";
                     }
-                    props.xlabel += `<${(rounded(effect))}>`;
+                    props.xlabel += `<${(effect.toPrecision(4))}>`;
                 }
                 if (effect === 0) {
                     props.style = "dotted";
@@ -523,8 +515,8 @@ export function convertToTable(parsed: Input) {
         if (parsed.risk != null) {
             const risk = node.getRisk();
             row.push(
-                parsed.risk === "value" ? rounded(risk.value) : risk[parsed.risk],
-                rounded(node.getPriority())
+                parsed.risk === "value" ? risk.value.toPrecision(4) : risk[parsed.risk],
+                node.getPriority().toPrecision(4)
             );
         }
         table.push(row);

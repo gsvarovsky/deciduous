@@ -1,48 +1,40 @@
-import {rounded} from "./util.js";
-
 function opListString(operator: string, operands: string[]) {
     return operands.length ? operands.length > 1 ? `(${operands.join(operator)})` : operands[0] : "";
 }
 
-type RiskConditions = (number | undefined)[];
+type RiskEffect = [inherent?: number, effect?: number];
+type RiskCondition = RiskEffect | Risk;
 
 export interface Risk {
     value: number;
     calc: string;
 }
 
-function riskAtom(conditions: RiskConditions): Risk | undefined {
-    const numbers = conditions.filter(
-        (value): value is number => value != null);
-    if (numbers.length) {
-        return {
-            value: numbers.reduce((final, value) => value * final, 1),
-            calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(rounded))
+function riskAtom(condition: RiskCondition): Risk | undefined {
+    if (Array.isArray(condition)) {
+        const numbers = condition.filter(
+            (value): value is number => value != null);
+        if (numbers.length) {
+            return {
+                value: numbers.reduce((final, value) => value * final, 1),
+                calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(function (effect: number) {
+                    return effect.toPrecision(4);
+                }))
+            }
         }
+    } else {
+        return condition;
     }
 }
 
-export class CalcRisk implements Readonly<Risk> {
-    private ors: RiskConditions[] = [];
-    private ands: RiskConditions[] = [];
+abstract class CalcRisk implements Readonly<Risk> {
+    protected risks: RiskCondition[] = [];
     private final?: Risk;
 
-    constructor(fact: boolean) {
-        if (fact) {
-            this.ors.push([1]);
-        }
-    }
-
-    or(...conditions: RiskConditions) {
+    add(conditions: RiskCondition) {
         if (this.final != null)
             throw new Error("Calculation finalised");
-        this.ors.push(conditions);
-    }
-
-    and(...conditions: RiskConditions) {
-        if (this.final != null)
-            throw new Error("Calculation finalised");
-        this.ands.push(conditions);
+        this.risks.push(conditions);
     }
 
     get value() {
@@ -63,30 +55,52 @@ export class CalcRisk implements Readonly<Risk> {
     }
 
     finalOk() {
+        this.final = this.calcFinal();
+        return this;
+    }
+
+    protected abstract calcFinal(): Risk;
+}
+
+export class OrRisk extends CalcRisk {
+    constructor(fact: boolean) {
+        super();
+        if (fact) {
+            this.risks.push([1]);
+        }
+    }
+
+    calcFinal(): Risk {
         const orCalc: string[] = [];
         let orValue = 0;
-        for (let conditions of this.ors) {
+        for (let conditions of this.risks) {
             const risk = riskAtom(conditions);
             if (risk != null) {
                 orValue += risk.value;
                 orCalc.push(risk.calc);
             }
         }
+        return {
+            value: orValue,
+            calc: opListString("+", orCalc)
+        };
+    }
+}
+
+export class AndRisk extends CalcRisk {
+    calcFinal(): Risk {
         const andCalc: string[] = [];
         let andValue = 1;
-        for (let conditions of this.ands) {
+        for (let conditions of this.risks) {
             const risk = riskAtom(conditions);
             if (risk != null) {
                 andValue *= risk.value;
                 andCalc.push(risk.calc);
             }
         }
-        this.final = {
-            value: (orCalc.length ? orValue : 1) * (andCalc.length ? andValue : 1),
-            calc: [
-                opListString("+", orCalc),
-                opListString("×", andCalc)
-            ].filter(s => s).join("×")
+        return {
+            value: andValue,
+            calc: opListString("×", andCalc)
         };
     }
 }

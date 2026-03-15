@@ -1,8 +1,6 @@
-import {CalcRisk, Risk} from "./risk.js";
-import {rounded} from "./util.js";
+import {AndRisk, OrRisk, Risk} from "./risk.js";
 import type {NodeGraph} from "./graph.js";
-
-const noMitigation = Symbol("noMitigation");
+import {Scenario} from "./scenario.js";
 
 export type NodeType = "attack" | "mitigation" | "fact" | "goal";
 
@@ -22,36 +20,62 @@ export type From = FromFlags & {
     label?: "#yolosec" | string;
 };
 
-export class Node {
-    private riskScenarios: { [omitMitigation: string | symbol]: Risk } = {};
+export const defaultFrom: Omit<From, "name"> = {
+    label: undefined,
+    backwards: false,
+    ungrouped: false,
+    required: false,
+    sufficient: true,
+    effect: undefined
+};
 
-    constructor(
+export class Node {
+    private riskScenarios: { [scenarioKey: string | symbol]: Risk } = {};
+
+    static make(
+       name: string,
+       label: string,
+       from: From[],
+       type: NodeType,
+       graph: NodeGraph
+    ): Node {
+       switch (type) {
+           case "mitigation": return new Mitigation(name, label, from, type, graph);
+           default: return new Node(name, label, from, type, graph);
+       }
+    }
+
+    protected constructor(
         readonly name: string,
         readonly label: string,
         readonly from: From[],
         readonly type: NodeType,
         protected readonly graph: NodeGraph
-    ) {
-    }
+    ) {}
 
-    getRisk(omitMitigation: string | symbol = noMitigation): Risk {
-        if (this.riskScenarios[omitMitigation] == null) {
-            const calc = new CalcRisk(this.from.length === 0);
-            this.riskScenarios[omitMitigation] = calc;
+    getRisk(scenario: Scenario = Scenario.none): Risk {
+        if (this.riskScenarios[scenario.key] == null) {
+            const calc = new AndRisk();
+            const orCalc = new OrRisk(this.from.length === 0);
+            const andCalc = new AndRisk();
+            this.riskScenarios[scenario.key] = calc;
             // Incoming attack/fact risks and effects on the risk
             // If nothing is sufficient, risk is nothing
             if (this.from.some(from => from.sufficient)) {
                 for (let from of this.from) {
-                    if (!from.backwards) {
+                    if (!from.backwards) { // TODO: effect of backwards on risk
                         try {
-                            const theirRisk = this.graph.get(from.name)?.getRisk(omitMitigation);
-                            (from.required ? calc.and : calc.or).call(
-                                calc, theirRisk?.value, this.incomingRiskEffect(from));
+                            const theirRisk = this.graph.get(from.name)?.getRisk(scenario);
+                            let incomingEffect = this.incomingRiskEffect(from);
+                            if (from.required) {
+                                andCalc.add([theirRisk?.value, incomingEffect]);
+                            } else {
+                                orCalc.add([theirRisk?.value, incomingEffect]);
+                            }
                         } catch (e) {
                             if (e === "#REC!")
                                 return calc.finalRecursive();
-                            else
-                                throw e;
+                            throw e;
                         }
                     }
                 }
@@ -59,14 +83,16 @@ export class Node {
             // Outgoing mitigation effects (no inherent risks)
             for (let toNode of this.graph.all) {
                 for (let from of toNode.from) {
-                    if (toNode.name !== omitMitigation && from.name === this.name) {
-                        calc.and(toNode.outgoingRiskEffect(from));
+                    if (toNode.name !== scenario.omit?.name && from.name === this.name) {
+                        andCalc.add([toNode.outgoingRiskEffect(from)]);
                     }
                 }
             }
+            calc.add(orCalc.finalOk());
+            calc.add(andCalc.finalOk());
             calc.finalOk();
         }
-        return this.riskScenarios[omitMitigation];
+        return this.riskScenarios[scenario.key];
     }
 
     getPriority() {
@@ -81,7 +107,7 @@ export class Node {
                 if (this.getRisk().value > 1)
                     value = ">1!";
                 else
-                    value = rounded(this.getRisk().value);
+                    value = this.getRisk().value.toPrecision(4);
                 break;
             case "calc":
                 value = this.getRisk().calc;
@@ -102,7 +128,7 @@ export class Node {
     }
 }
 
-export class Mitigation extends Node {
+class Mitigation extends Node {
     private priority = -1;
 
     getPriority() {
@@ -110,7 +136,7 @@ export class Mitigation extends Node {
             // Mitigation Priority is the average effect on attacker goals
             let value = 0, count = 0;
             for (let goal of this.graph.goals) {
-                value += goal.getRisk(this.name).value - goal.getRisk(noMitigation).value;
+                value += goal.getRisk(Scenario.omit(this)).value - goal.getRisk(Scenario.none).value;
                 count++;
             }
             this.priority = value / count;
@@ -128,7 +154,7 @@ export class Mitigation extends Node {
 
     getDisplayValue() {
         // Mitigations display their value in preventing goals
-        return `𝛿:${rounded(this.getPriority())}`;
+        return `𝛿:${(this.getPriority().toPrecision(4))}`;
     }
 
     protected incomingRiskEffect() {

@@ -18,7 +18,7 @@ export class NodeGraph {
         return this.all.filter(goal => goal.type === "goal");
     }
 
-    addNode(node: Node) {
+    add(node: Node) {
         if (Object.hasOwnProperty.call(this.allNodes, node.name)) {
             throw new Error(`${node.name} cannot be declared twice. It was previously declared as ${node.type}`);
         }
