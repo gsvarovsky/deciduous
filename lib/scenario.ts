@@ -5,12 +5,12 @@ export class Scenario {
 
     static none = new Scenario(new Set(), null);
 
-    static omit(node: Node) {
-        return new Scenario(new Set(), node);
+    withOmit(node: Node) {
+        return new Scenario(this.given, node);
     }
 
-    static given(nodes: Set<Node>) {
-        return new Scenario(nodes, null);
+    withGiven(nodes: Set<Node>) {
+        return new Scenario(nodes, this.omit);
     }
 
     private constructor(

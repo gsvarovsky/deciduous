@@ -1,6 +1,7 @@
 import {AndRisk, OrRisk, Risk} from "./risk.js";
 import type {NodeGraph} from "./graph.js";
 import {Scenario} from "./scenario.js";
+import {cartesian} from "./stats.js";
 
 export type NodeType = "attack" | "mitigation" | "fact" | "goal";
 
@@ -31,6 +32,7 @@ export const defaultFrom: Omit<From, "name"> = {
 
 export class Node {
     private riskScenarios: { [scenarioKey: string | symbol]: Risk } = {};
+    private cutCalcs: {[token: symbol]: true} = {};
 
     static make(
        name: string,
@@ -53,6 +55,62 @@ export class Node {
         protected readonly graph: NodeGraph
     ) {}
 
+    /**
+     * Always returns at least [Set(this)]
+     */
+    *cuts(token = Symbol()): Generator<Set<Node>> {
+        if (this.cutCalcs.hasOwnProperty(token))
+            return;
+        this.cutCalcs[token] = true;
+        // Every required cut is combined with every option cut
+        const requiredCuts: Set<Node>[] = [];
+        for (let from of this.riskFroms()) {
+            if (from.required) {
+                for (let cut of this.fromCuts(from, token))
+                    requiredCuts.push(new Set(cut));
+            }
+        }
+        let yielded = false;
+        for (let from of this.riskFroms()) {
+            if (!from.required) {
+                for (let optionCut of this.fromCuts(from, token)) {
+                    yield* this.optionCuts(cartesian(requiredCuts), optionCut);
+                    yielded = true;
+                }
+            }
+        }
+        // There were no option cuts
+        if (!yielded)
+            yield* this.optionCuts(cartesian(requiredCuts));
+        delete this.cutCalcs[token];
+    }
+
+    private *fromCuts(from: From, token: symbol) {
+        const fromNode = this.graph.get(from.name);
+        if (fromNode != null)
+            yield *fromNode.cuts(token);
+    }
+
+    private* optionCuts(requiredCuts: Iterable<Node[]>, optionCut: Iterable<Node> = []) {
+        let yielded = false;
+        for (let requiredCut of requiredCuts) {
+            yield new Set([this, ...requiredCut, ...optionCut]);
+            yielded = true;
+        }
+        if (!yielded)
+            yield new Set([this, ...optionCut]);
+    }
+
+    *riskFroms() {
+        if (this.from.some(from => from.sufficient)) {
+            for (let from of this.from) {
+                if (!from.backwards) { // TODO: effect of backwards on risk
+                    yield from;
+                }
+            }
+        }
+    }
+
     getRisk(scenario: Scenario = Scenario.none): Risk {
         if (this.riskScenarios[scenario.key] == null) {
             const calc = new AndRisk();
@@ -61,23 +119,19 @@ export class Node {
             this.riskScenarios[scenario.key] = calc;
             // Incoming attack/fact risks and effects on the risk
             // If nothing is sufficient, risk is nothing
-            if (this.from.some(from => from.sufficient)) {
-                for (let from of this.from) {
-                    if (!from.backwards) { // TODO: effect of backwards on risk
-                        try {
-                            const theirRisk = this.graph.get(from.name)?.getRisk(scenario);
-                            let incomingEffect = this.incomingRiskEffect(from);
-                            if (from.required) {
-                                andCalc.add([theirRisk?.value, incomingEffect]);
-                            } else {
-                                orCalc.add([theirRisk?.value, incomingEffect]);
-                            }
-                        } catch (e) {
-                            if (e === "#REC!")
-                                return calc.finalRecursive();
-                            throw e;
-                        }
+            for (let from of this.riskFroms()) {
+                try {
+                    const theirRisk = this.graph.get(from.name)?.getRisk(scenario);
+                    let incomingEffect = this.incomingRiskEffect(from);
+                    if (from.required) {
+                        andCalc.add([theirRisk?.value, incomingEffect]);
+                    } else {
+                        orCalc.add([theirRisk?.value, incomingEffect]);
                     }
+                } catch (e) {
+                    if (e === "#REC!")
+                        return calc.finalRecursive();
+                    throw e;
                 }
             }
             // Outgoing mitigation effects (no inherent risks)
@@ -136,7 +190,7 @@ class Mitigation extends Node {
             // Mitigation Priority is the average effect on attacker goals
             let value = 0, count = 0;
             for (let goal of this.graph.goals) {
-                value += goal.getRisk(Scenario.omit(this)).value - goal.getRisk(Scenario.none).value;
+                value += goal.getRisk(Scenario.none.withOmit(this)).value - goal.getRisk(Scenario.none).value;
                 count++;
             }
             this.priority = value / count;

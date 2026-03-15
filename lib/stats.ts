@@ -47,3 +47,16 @@ export function *combinations<T>(items: T[]): Generator<T[]> {
     for (let i = 1; i <= items.length; i++)
         yield *gen(i, items, []);
 }
+
+export function *cartesian<T>(sets: Iterable<T>[]): Generator<T[]> {
+    if (sets.length > 0) {
+        for (let item of sets[0]) {
+            if (sets.length === 1) {
+                yield [item];
+            } else {
+                for (let set of cartesian(sets.slice(1)))
+                    yield [item, ...set];
+            }
+        }
+    }
+}
