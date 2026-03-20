@@ -1,107 +1,103 @@
-function opListString(operator: string, operands: string[]) {
-    return operands.length ? operands.length > 1 ? `(${operands.join(operator)})` : operands[0] : "";
-}
-
-type RiskEffect = [inherent?: number, effect?: number];
-type RiskCondition = RiskEffect | CalcRisk;
+import {depAnd, depOr, GetDepProbability} from "./stats.js";
 
 export interface Risk {
     value: number;
     calc: string;
 }
 
-function riskAtom(condition: RiskEffect | Risk): Risk | undefined {
-    if (Array.isArray(condition)) {
-        const numbers = condition.filter(
-            (value): value is number => value != null);
-        if (numbers.length) {
-            return {
-                value: numbers.reduce((final, value) => value * final, 1),
-                calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(function (effect: number) {
-                    return effect.toPrecision(4);
-                }))
-            }
-        }
-    } else {
-        return condition;
-    }
-}
+export type RiskEffect<Event> = [event: Event, effect?: number];
 
-abstract class CalcRisk implements Readonly<Risk> {
+export const RECURSING = "#REC!";
+
+abstract class CalcRisk<Event> implements Readonly<Risk> {
     private final?: Risk;
 
     constructor(
-        private conditions: RiskCondition[] = []
+        protected probabilityOf: GetDepProbability<RiskEffect<Event>>,
+        private cnd: RiskEffect<Event>[] = []
     ) {}
 
-    add(condition: RiskCondition) {
+    get conditions() {
         if (this.final != null)
             throw new Error("Calculation finalised");
-        this.conditions.push(condition);
+        return this.cnd;
     }
 
     get value() {
-        if (this.final == null)
-            throw "#REC!";
-        return this.final.value;
+        return this.assertFinal().value;
     }
 
     get calc() {
+        return this.assertFinal().calc;
+    }
+
+    private assertFinal() {
         if (this.final == null)
-            throw "#REC!";
-        return this.final.calc;
+            throw RECURSING;
+        return this.final;
     }
 
-    finalRecursive() {
-        this.final = {value: 0, calc: "#REC!"};
-        return this;
+    isEmpty() {
+        return this.cnd.length === 0;
     }
 
-    finalOk() {
-        this.final = this.calcFinal(this.conditions.map(risk =>
-            risk instanceof CalcRisk ? risk.finalOk() : risk));
-        return this;
-    }
-
-    protected abstract calcFinal(conditions: (RiskEffect | Risk)[]): Risk;
-}
-
-export class OrRisk extends CalcRisk {
-    constructor(fact: boolean) {
-        super(fact ? [[1]] : []);
-    }
-
-    calcFinal(conditions: (RiskEffect | Risk)[]): Risk {
-        const orCalc: string[] = [];
-        let orValue = 0;
-        for (let condition of conditions) {
-            const risk = riskAtom(condition);
-            if (risk != null) {
-                orValue += risk.value;
-                orCalc.push(risk.calc);
+    finalise() {
+        try {
+            this.final = this.calcFinal(this.cnd);
+            console.debug(this.final.calc + " = " + this.final.value);
+        } catch (e) {
+            if (e === RECURSING) {
+                this.final = {value: 0, calc: RECURSING};
+            } else {
+                throw e;
             }
         }
+        return this;
+    }
+
+    protected abstract calcFinal(conditions: RiskEffect<Event>[]): Risk;
+}
+
+export class OrRisk<Event> extends CalcRisk<Event> {
+    calcFinal(conditions: RiskEffect<Event>[]): Risk {
         return {
-            value: orValue,
-            calc: opListString("+", orCalc)
+            value: depOr(this.probabilityOf, ...conditions),
+            calc: `OR(${conditions.map(effectString)})`
         };
     }
 }
 
-export class AndRisk extends CalcRisk {
-    calcFinal(conditions: (RiskEffect | Risk)[]): Risk {
-        const andCalc: string[] = [];
-        let andValue = 1;
-        for (let condition of conditions) {
-            const risk = riskAtom(condition);
-            if (risk != null) {
-                andValue *= risk.value;
-                andCalc.push(risk.calc);
-            }
-        }
+export class AndRisk<Event> extends CalcRisk<Event> {
+    calcFinal(conditions: RiskEffect<Event>[]): Risk {
         return {
-            value: andValue,
-            calc: opListString("×", andCalc)
+            value: depAnd(this.probabilityOf, ...conditions),
+            calc: `AND(${conditions.map(effectString)})`
         };
     }
 }
+
+function effectString([event, effect]: RiskEffect<any>) {
+    return ((typeof event === "object" && event.name) || event) + (effect ? "×" + effect : "");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// function opListString(operator: string, operands: string[]) {
+//     return operands.length ? operands.length > 1 ? `(${operands.join(operator)})` : operands[0] : "";
+// }
+//
+// function riskAtom(condition: RiskEffect | Risk): Risk | undefined {
+//     if (Array.isArray(condition)) {
+//         const numbers = condition.filter(
+//             (value): value is number => value != null);
+//         if (numbers.length) {
+//             return {
+//                 value: numbers.reduce((final, value) => value * final, 1),
+//                 calc: opListString("×", [numbers[0], ...numbers.slice(1).filter(v => v != 1)].map(function (effect: number) {
+//                     return effect.toPrecision(4);
+//                 }))
+//             }
+//         }
+//     } else {
+//         return condition;
+//     }
+// }

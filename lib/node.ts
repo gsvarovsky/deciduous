@@ -1,6 +1,6 @@
-import {AndRisk, OrRisk, Risk} from "./risk.js";
+import {AndRisk, OrRisk, RECURSING, Risk, RiskEffect} from "./risk.js";
 import type {NodeGraph} from "./graph.js";
-import {Scenario} from "./scenario.js";
+import {Cut, REALITY, RiskGraphEvent, Scenario, unionCuts} from "./scenario.js";
 import {cartesian} from "./stats.js";
 
 export type NodeType = "attack" | "mitigation" | "fact" | "goal";
@@ -30,19 +30,11 @@ export const defaultFrom: Omit<From, "name"> = {
     effect: undefined
 };
 
-type Cut = Set<Node>;
-
-export class Node {
+export class Node implements RiskGraphEvent {
     private riskScenarios: { [scenarioKey: string | symbol]: Risk } = {};
-    private cutCalcs: {[token: symbol]: true} = {};
+    private lazyCuts: undefined | typeof RECURSING | Cut[];
 
-    static make(
-       name: string,
-       label: string,
-       from: From[],
-       type: NodeType,
-       graph: NodeGraph
-    ): Node {
+    static make(name: string, label: string, from: From[], type: NodeType, graph: NodeGraph): Node {
        switch (type) {
            case "mitigation": return new Mitigation(name, label, from, type, graph);
            default: return new Node(name, label, from, type, graph);
@@ -60,102 +52,81 @@ export class Node {
     /**
      * Always yields at least [Set(this)]
      */
-    *cuts(token = Symbol()): Generator<Cut> {
-        if (this.cutCalcs.hasOwnProperty(token))
-            return;
-        this.cutCalcs[token] = true;
-        // (1 AND a AND c) OR (1 AND a AND d) OR ...
-        const cutIntersection = [...cartesian(this.cutUnion(token))];
-        let yielded = false;
-        for (let cuts of cutIntersection) {
-            yield new Set(Array<Node>(this).concat(...cuts.map(cut => [...cut])));
-            yielded = true;
-        }
+    cuts(): Cut[] {
+        if (Array.isArray(this.lazyCuts))
+            return this.lazyCuts;
+        if (this.lazyCuts === RECURSING)
+            return [];
+        this.lazyCuts = RECURSING;
+        const headCut = new Set([this]);
+        const {options, required} = this.riskFroms();
+        // (1 OR 2 OR 3 OR 4) AND (a OR b) AND (c OR d)
+        // ---E---   ---F---      ---G---      ---H---
+        // where 1-4 and a-d are cuts, E,F are option nodes, G,H are required nodes
+        const cutUnion = (!options.length ? [] : [options.map(([node]) => node.cuts()).flat()])
+            .concat(...required.map(([node]) => [node.cuts()]));
+        // (this AND 1 AND a AND c) OR (this AND 1 AND a AND d) OR ...
+        let cuts = [...cartesian(cutUnion)]
+            .map(cuts => unionCuts(headCut, ...cuts));
         // There were no from cuts
-        if (!yielded)
-            yield new Set([this]);
-        delete this.cutCalcs[token];
+        if (!cuts.length)
+            cuts = [headCut];
+        return this.lazyCuts = cuts;
     }
 
-    /**
-     * [opt1 OR opt2] AND [req1] AND [req2]
-     */
-    private fromUnion(): Node[][] {
-        const options: Node[] = [];
-        const union: Node[][] = [options];
-        for (let from of this.riskFroms()) {
-            const fromNode = this.graph.get(from.name);
-            if (fromNode != null) {
-                if (from.required) {
-                    union.push([fromNode]);
-                } else {
-                    options.push(fromNode);
-                }
+    riskFroms(): {options: RiskEffect<RiskGraphEvent>[], required: RiskEffect<RiskGraphEvent>[]} {
+        const options: RiskEffect<RiskGraphEvent>[] = [], required: RiskEffect<RiskGraphEvent>[] = [];
+        for (let from of this.from) {
+            if (!from.backwards) { // backwards has no effect on risk
+                const node = this.graph.get(from.name);
+                (from.required ? required : options).push([node ?? REALITY, this.incomingRiskEffect(from)]);
             }
         }
-        // If there were no options we still want the required
-        if (!options.length)
-            union.shift();
-        return union;
-    }
-
-    /**
-     * ((1 OR 2) OR (3 OR 4)) AND (a OR b) AND (c OR d)
-     * where 1-4 are cuts of options and a-d are cuts of required
-     */
-    private cutUnion(token: symbol) {
-        // Translate every from node to a set of cuts
-        return this.fromUnion().map(nodes => {
-            const cuts: Cut[] = [];
-            for (let node of nodes)
-                cuts.push(...node.cuts(token));
-            return cuts;
-        });
-    }
-
-    *riskFroms() {
-        if (this.from.some(from => from.sufficient)) {
-            for (let from of this.from) {
-                if (!from.backwards) { // TODO: effect of backwards on risk
-                    yield from;
-                }
-            }
-        }
+        return {options, required};
     }
 
     getRisk(scenario: Scenario = Scenario.none): Risk {
         if (this.riskScenarios[scenario.key] == null) {
-            const andCalc = new AndRisk();
-            this.riskScenarios[scenario.key] = andCalc;
-            try {
-                const orCalc = new OrRisk(this.from.length === 0);
-                andCalc.add(orCalc);
-                // Incoming attack/fact risks and effects on the risk
-                for (let from of this.riskFroms()) {
-                    const theirRisk = this.graph.get(from.name)?.getRisk(scenario);
-                    const incomingEffect = this.incomingRiskEffect(from);
-                    if (from.required) {
-                        andCalc.add([theirRisk?.value, incomingEffect]);
-                    } else {
-                        orCalc.add([theirRisk?.value, incomingEffect]);
+            if (scenario.cut.has(this)) {
+                this.riskScenarios[scenario.key] = {value: 1, calc: "#GIVEN"};
+            } else if (this.from.length && !this.from.some(from => from.sufficient)) {
+                this.riskScenarios[scenario.key] = {value: 0, calc: "#INSUF"};
+            } else {
+                const thisNode = this;
+                const optsCalc = new OrRisk<RiskGraphEvent>(scenario.depRiskProbability);
+                const reqsCalc = new class extends AndRisk<RiskGraphEvent> {
+                    calcFinal(conditions: RiskEffect<RiskGraphEvent>[]): Risk {
+                        return thisNode.applyOutgoingEffects(scenario, super.calcFinal(conditions));
                     }
+                }(scenario.depRiskProbability);
+                this.riskScenarios[scenario.key] = reqsCalc;
+                const {options, required} = this.riskFroms();
+                optsCalc.conditions.push(...options);
+                reqsCalc.conditions.push(...required);
+                if (!optsCalc.isEmpty()) {
+                    // Pseudo required node for options
+                    reqsCalc.conditions.unshift([{
+                        name: `${this.name}#options`,
+                        cuts: () => options.map(([event]) => event.cuts()).flat(),
+                        getRisk: () => optsCalc.finalise()
+                    }, 1]);
                 }
-                // Outgoing mitigation effects (no inherent risks)
-                for (let toNode of this.graph.all) {
-                    for (let from of toNode.from) {
-                        if (toNode.name !== scenario.omit?.name && from.name === this.name) {
-                            andCalc.add([toNode.outgoingRiskEffect(from)]);
-                        }
-                    }
-                }
-                andCalc.finalOk();
-            } catch (e) {
-                if (e === "#REC!")
-                    return andCalc.finalRecursive();
-                throw e;
+                reqsCalc.finalise();
             }
         }
         return this.riskScenarios[scenario.key];
+    }
+
+    private applyOutgoingEffects(scenario: Scenario, risk: Risk) {
+        for (let toNode of this.graph.all) {
+            for (let from of toNode.from) {
+                if (toNode.name !== scenario.omit?.name && from.name === this.name) {
+                    // Outgoing effects only, no inherent risks
+                    risk.value *= toNode.outgoingRiskEffect(from) ?? 1;
+                }
+            }
+        }
+        return risk;
     }
 
     getPriority() {

@@ -12,7 +12,8 @@ E<and>.cuts = cuts(froms)
 E<or>.cuts = { ...f:froms => f.cuts }
 
 E|F = DEPOR(E|cF1..E|cFn) where cF is chosen from cuts(F)
-e.g. E|F,H,A + E|F,D,A - E|F,D,H,A = 0.5 + 1 - 1 = 0.5
+e.g. E|c(F,H,A) + E|c(F,D,A) - E|c(F,D,H,A) = 0.5 + 1 - 1 = 0.5
+E|F,G = DEPOR(...E|(c <- cartesian(cuts(F), cuts(G))))
 
 E depand F = p(E|F) * p(F)
 

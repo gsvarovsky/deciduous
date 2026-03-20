@@ -1,3 +1,5 @@
+export type GetDepProbability<Event> = (e: Event, ...given: Event[]) => number;
+
 /**
  * AND of a set of dependent events
  * After https://chrispiech.github.io/probabilityForComputerScientists/en/part1/prob_and/
@@ -5,7 +7,7 @@
  * @param events
  */
 export function depAnd<Event>(
-    probabilityOf: (e: Event, ...given: Event[]) => number,
+    probabilityOf: GetDepProbability<Event>,
     ...events: Event[]
 ): number {
     let p = 1;
@@ -22,7 +24,7 @@ export function depAnd<Event>(
  * @param events
  */
 export function depOr<Event>(
-    probabilityOf: (e: Event, ...given: Event[]) => number,
+    probabilityOf: GetDepProbability<Event>,
     ...events: Event[]
 ): number {
     let p = 0, i = 0;
