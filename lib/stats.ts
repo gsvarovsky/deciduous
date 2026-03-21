@@ -37,26 +37,26 @@ export function depOr<Event>(
 }
 
 export function *combinations<T>(items: T[]): Generator<T[]> {
-    function *gen(n: number, src: T[], soFar: T[]): Generator<T[]> {
+    function *gen(n: number, src: T[], at = 0, ...soFar: T[]): Generator<T[]> {
         if (n === 0) {
             if (soFar.length > 0)
                 yield soFar;
         } else {
-            for (let j = 0; j < src.length; j++)
-                yield *gen(n - 1, src.slice(j + 1), soFar.concat([src[j]]));
+            for (let j = at; j < src.length; j++)
+                yield *gen(n - 1, src, j + 1, ...soFar, src[j]);
         }
     }
     for (let i = 1; i <= items.length; i++)
-        yield *gen(i, items, []);
+        yield *gen(i, items);
 }
 
-export function *cartesian<T>(sets: Iterable<T>[]): Generator<T[]> {
-    if (sets.length > 0) {
-        for (let item of sets[0]) {
-            if (sets.length === 1) {
+export function *cartesian<T>(sets: Iterable<T>[], at = 0): Generator<T[]> {
+    if (sets.length > at) {
+        for (let item of sets[at]) {
+            if (sets.length === at + 1) {
                 yield [item];
             } else {
-                for (let set of cartesian(sets.slice(1)))
+                for (let set of cartesian(sets, at + 1))
                     yield [item, ...set];
             }
         }

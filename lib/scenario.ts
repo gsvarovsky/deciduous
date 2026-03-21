@@ -3,7 +3,7 @@ import {Risk, RiskEffect} from "./risk.js";
 import {cartesian, depOr, GetDepProbability} from "./stats.js";
 
 export class Scenario {
-    readonly key: string;
+    private readonly cutNodesNames: string[];
 
     static none = new Scenario(new Set(), null);
 
@@ -12,51 +12,59 @@ export class Scenario {
     }
 
     withGiven(cut: Cut) {
-        return new Scenario(cut, this.omit);
+        return new Scenario(unionCuts([this.cut, cut]), this.omit);
     }
 
     private constructor(
         readonly cut: Cut,
         readonly omit: Node | null
     ) {
-        this.key = JSON.stringify({
-            omit: omit?.name,
-            cut: [...this.cut].map(node => node.name).sort()
+        this.cutNodesNames = [...this.cut].map(node => node.name).sort();
+    }
+
+    key(withOnly: Set<string>) {
+        return JSON.stringify({
+            omit: this.omit?.name,
+            cut: this.cutNodesNames.filter(name => withOnly.has(name))
         });
     }
 
     readonly depRiskProbability: GetDepProbability<RiskEffect<RiskGraphEvent>> = (
         [event, effect], ...given
     ): number => {
-        return depOr(
+        return (!given.length ? event.getRisk(this).value : depOr(
             (...cuts) =>
-                event.getRisk(this.withGiven(unionCuts(...cuts.flat()))).value,
-            this.cut,
+                event.getRisk(this.withGiven(unionCuts(cuts.flat()))).value,
             ...this.powerCuts(given)
-        ) * (effect ?? 1);
+        )) * (effect ?? 1);
     }
 
     private *powerCuts(given: RiskEffect<RiskGraphEvent>[]) {
-        for (let powerCut of cartesian(given.map(([event]) => event.cuts())))
-            yield unionCuts(...powerCut);
+        for (let powerCut of cartesian(given.map(([event]) => event.cuts)))
+            yield unionCuts(powerCut);
     }
 }
 
-export type Cut = Set<RiskGraphEvent>;
+export type Cut = ReadonlySet<RiskGraphEvent>;
 
 export interface RiskGraphEvent {
     readonly name: string;
-    cuts(): Cut[];
+    readonly cuts: Cut[];
     getRisk(scenario?: Scenario): Risk;
     toString(): string;
 }
 
 export const REALITY: RiskGraphEvent = {
     name: "reality",
-    cuts: () => [],
+    cuts: [],
     getRisk: () => ({value: 1, calc: "#REALITY"})
 }
 
-export function unionCuts(...cuts: Cut[]) {
-    return new Set(cuts.map(cut => [...cut]).flat());
+export function unionCuts(cuts: Cut[]) {
+    const union = new Set<RiskGraphEvent>;
+    for (let cut of cuts) {
+        for (let node of cut)
+            union.add(node);
+    }
+    return union;
 }

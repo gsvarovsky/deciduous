@@ -1,4 +1,4 @@
-import {defaultFrom, From, FromFlags, Node} from "./lib/node.js";
+import {defaultFrom, displayRiskValue, From, FromFlags, Node} from "./lib/node.js";
 import {NodeGraph} from "./lib/graph.js";
 
 export const themes: { [name: string]: Theme } = {
@@ -334,7 +334,7 @@ digraph {
                     } else {
                         props.xlabel = "";
                     }
-                    props.xlabel += `<${(effect.toPrecision(4))}>`;
+                    props.xlabel += `<${(displayRiskValue(effect))}>`;
                 }
                 if (effect === 0) {
                     props.style = "dotted";
@@ -515,8 +515,8 @@ export function convertToTable(parsed: Input) {
         if (parsed.risk != null) {
             const risk = node.getRisk();
             row.push(
-                parsed.risk === "value" ? risk.value.toPrecision(4) : risk[parsed.risk],
-                node.getPriority().toPrecision(4)
+                parsed.risk === "value" ? displayRiskValue(risk.value) : risk[parsed.risk],
+                displayRiskValue(node.getPriority())
             );
         }
         table.push(row);

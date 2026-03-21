@@ -31,14 +31,16 @@ export const defaultFrom: Omit<From, "name"> = {
 };
 
 export class Node implements RiskGraphEvent {
+    private readonly insufficient: boolean;
     private riskScenarios: { [scenarioKey: string | symbol]: Risk } = {};
     private lazyCuts: undefined | typeof RECURSING | Cut[];
+    private lazyAllCutNodeNames: undefined | Set<string>;
 
     static make(name: string, label: string, from: From[], type: NodeType, graph: NodeGraph): Node {
-       switch (type) {
-           case "mitigation": return new Mitigation(name, label, from, type, graph);
-           default: return new Node(name, label, from, type, graph);
-       }
+        switch (type) {
+            case "mitigation": return new Mitigation(name, label, from, type, graph);
+            default: return new Node(name, label, from, type, graph);
+        }
     }
 
     protected constructor(
@@ -47,12 +49,14 @@ export class Node implements RiskGraphEvent {
         readonly from: From[],
         readonly type: NodeType,
         protected readonly graph: NodeGraph
-    ) {}
+    ) {
+        this.insufficient = from.length > 0 && !from.some(f => f.sufficient);
+    }
 
     /**
      * Always yields at least [Set(this)]
      */
-    cuts(): Cut[] {
+    get cuts(): Cut[] {
         if (Array.isArray(this.lazyCuts))
             return this.lazyCuts;
         if (this.lazyCuts === RECURSING)
@@ -63,15 +67,20 @@ export class Node implements RiskGraphEvent {
         // (1 OR 2 OR 3 OR 4) AND (a OR b) AND (c OR d)
         // ---E---   ---F---      ---G---      ---H---
         // where 1-4 and a-d are cuts, E,F are option nodes, G,H are required nodes
-        const cutUnion = (!options.length ? [] : [options.map(([node]) => node.cuts()).flat()])
-            .concat(...required.map(([node]) => [node.cuts()]));
+        const cutUnion = (!options.length ? [] : [options.map(([node]) => node.cuts).flat()])
+            .concat(...required.map(([node]) => [node.cuts]));
         // (this AND 1 AND a AND c) OR (this AND 1 AND a AND d) OR ...
         let cuts = [...cartesian(cutUnion)]
-            .map(cuts => unionCuts(headCut, ...cuts));
+            .map(cuts => unionCuts([headCut, ...cuts]));
         // There were no from cuts
         if (!cuts.length)
             cuts = [headCut];
         return this.lazyCuts = cuts;
+    }
+
+    private get allCutNodeNames(): Set<string> {
+        return this.lazyAllCutNodeNames ??
+            (this.lazyAllCutNodeNames = new Set([...unionCuts(this.cuts)].map(node => node.name)));
     }
 
     riskFroms(): {options: RiskEffect<RiskGraphEvent>[], required: RiskEffect<RiskGraphEvent>[]} {
@@ -86,12 +95,13 @@ export class Node implements RiskGraphEvent {
     }
 
     getRisk(scenario: Scenario = Scenario.none): Risk {
-        if (this.riskScenarios[scenario.key] == null) {
-            if (scenario.cut.has(this)) {
-                this.riskScenarios[scenario.key] = {value: 1, calc: "#GIVEN"};
-            } else if (this.from.length && !this.from.some(from => from.sufficient)) {
-                this.riskScenarios[scenario.key] = {value: 0, calc: "#INSUF"};
-            } else {
+        if (this.insufficient) {
+            return {value: 0, calc: "#INSUF"};
+        } else if (scenario.cut.has(this)) {
+            return {value: 1, calc: "#GIVEN"};
+        } else {
+            const key = scenario.key(this.allCutNodeNames);
+            if (this.riskScenarios[key] == null) {
                 const thisNode = this;
                 const optsCalc = new OrRisk<RiskGraphEvent>(scenario.depRiskProbability);
                 const reqsCalc = new class extends AndRisk<RiskGraphEvent> {
@@ -99,22 +109,30 @@ export class Node implements RiskGraphEvent {
                         return thisNode.applyOutgoingEffects(scenario, super.calcFinal(conditions));
                     }
                 }(scenario.depRiskProbability);
-                this.riskScenarios[scenario.key] = reqsCalc;
                 const {options, required} = this.riskFroms();
+                if (options.length == 1)
+                    required.push(options.pop()!);
                 optsCalc.conditions.push(...options);
                 reqsCalc.conditions.push(...required);
-                if (!optsCalc.isEmpty()) {
-                    // Pseudo required node for options
-                    reqsCalc.conditions.unshift([{
-                        name: `${this.name}#options`,
-                        cuts: () => options.map(([event]) => event.cuts()).flat(),
-                        getRisk: () => optsCalc.finalise()
-                    }, 1]);
+                if (required.length || !options.length) {
+                    if (options.length) {
+                        // Pseudo required node for options
+                        const optsPseudoNode = {
+                            get name() {
+                                return optsPseudoNode.getRisk().calc
+                            },
+                            cuts: options.map(([event]) => event.cuts).flat(),
+                            getRisk: () => optsCalc.finalise()
+                        };
+                        reqsCalc.conditions.unshift([optsPseudoNode, 1]);
+                    }
+                    this.riskScenarios[key] = reqsCalc.finalise();
+                } else {
+                    this.riskScenarios[key] = optsCalc.finalise();
                 }
-                reqsCalc.finalise();
             }
+            return this.riskScenarios[key];
         }
-        return this.riskScenarios[scenario.key];
     }
 
     private applyOutgoingEffects(scenario: Scenario, risk: Risk) {
@@ -141,7 +159,7 @@ export class Node implements RiskGraphEvent {
                 if (this.getRisk().value > 1)
                     value = ">1!";
                 else
-                    value = this.getRisk().value.toPrecision(4);
+                    value = displayRiskValue(this.getRisk().value);
                 break;
             case "calc":
                 value = this.getRisk().calc;
@@ -188,7 +206,7 @@ class Mitigation extends Node {
 
     getDisplayValue() {
         // Mitigations display their value in preventing goals
-        return `𝛿:${(this.getPriority().toPrecision(4))}`;
+        return `𝛿:${(displayRiskValue(this.getPriority()))}`;
     }
 
     protected incomingRiskEffect() {
@@ -201,3 +219,6 @@ class Mitigation extends Node {
     }
 }
 
+export function displayRiskValue(value: number) {
+    return `${+value.toPrecision(4)}`;
+}

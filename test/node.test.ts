@@ -1,3 +1,5 @@
+// noinspection DuplicatedCode
+
 import {describe, test} from "node:test";
 import {defaultFrom, Node} from "../lib/node.js"
 import {NodeGraph} from "../lib/graph.js";
@@ -67,6 +69,26 @@ test("Alternatives add risk", () => {
     assert.equal(attack.getRisk().value, 0.19);
 });
 
+test("Dependent alternatives add less risk", () => {
+    const graph = new NodeGraph();
+    graph.add(Node.make("my-risk", "MyRisk", [{
+        name: "reality", ...defaultFrom, effect: 0.5
+    }], "fact", graph));
+    graph.add(Node.make("my-attack-1", "MyAttack1", [{
+        name: "my-risk", ...defaultFrom, effect: 1
+    }], "attack", graph));
+    graph.add(Node.make("my-attack-2", "MyAttack2", [{
+        name: "my-risk", ...defaultFrom, effect: 1
+    }], "attack", graph));
+    const goal = graph.add(Node.make("my-goal", "MyGoal", [{
+        name: "my-attack-1", ...defaultFrom, effect: 0.5
+    }, {
+        name: "my-attack-2", ...defaultFrom, effect: 0.5
+    }], "attack", graph));
+    // 0.25+0.25-(0.25*0.5)
+    assert.equal(goal.getRisk().value, 0.375);
+});
+
 test("Requirements reduce risk", () => {
     const graph = new NodeGraph();
     graph.add(Node.make("my-fact-1", "MyFact1", [], "fact", graph));
@@ -81,29 +103,53 @@ test("Requirements reduce risk", () => {
 
 test("Dependent requirements reduce risk less", () => {
     const graph = new NodeGraph();
-    graph.add(Node.make("my-fact", "MyFact", [{
+    graph.add(Node.make("my-risk", "MyRisk", [{
         name: "reality", ...defaultFrom, effect: 0.5
     }], "fact", graph));
     graph.add(Node.make("my-attack-1", "MyAttack1", [{
-        name: "my-fact", ...defaultFrom, effect: 1
+        name: "my-risk", ...defaultFrom, effect: 1
     }], "attack", graph));
     graph.add(Node.make("my-attack-2", "MyAttack2", [{
-        name: "my-fact", ...defaultFrom, effect: 1
+        name: "my-risk", ...defaultFrom, effect: 1
     }], "attack", graph));
     const goal = graph.add(Node.make("my-goal", "MyGoal", [{
         name: "my-attack-1", ...defaultFrom, effect: 0.5, required: true
     }, {
         name: "my-attack-2", ...defaultFrom, effect: 0.5, required: true
-    }], "attack", graph));
+    }], "goal", graph));
     // 0.5^3 = 0.125 (not 0.5^4)
     assert.equal(goal.getRisk().value, 0.125);
+});
+
+test("Asymmetric dependent requirements commute", () => {
+    function makeAsymmetricGoal(attack1Effect: number, attack2Effect: number) {
+        const graph = new NodeGraph();
+        graph.add(Node.make("my-risk", "MyRisk", [{
+            name: "reality", ...defaultFrom, effect: 0.5
+        }], "fact", graph));
+        graph.add(Node.make("my-attack-1", "MyAttack1", [{
+            name: "my-risk", ...defaultFrom, effect: 1
+        }], "attack", graph));
+        graph.add(Node.make("my-attack-2", "MyAttack2", [{
+            name: "my-risk", ...defaultFrom, effect: 1
+        }], "attack", graph));
+        return graph.add(Node.make("my-goal", "MyGoal", [{
+            name: "my-attack-1", ...defaultFrom, effect: attack1Effect, required: true
+        }, {
+            name: "my-attack-2", ...defaultFrom, effect: attack2Effect, required: true
+        }], "goal", graph));
+    }
+    let actual1 = makeAsymmetricGoal(0.5, 0.05).getRisk().value;
+    let actual2 = makeAsymmetricGoal(0.05, 0.5).getRisk().value;
+    assert.equal(actual1, 0.0125);
+    assert.equal(actual1, actual2);
 });
 
 describe("Node cuts", () => {
     test("Fact cut is self", () => {
        const graph = new NodeGraph();
        const fact = graph.add(Node.make("my-fact", "MyFact", [], "fact", graph));
-       assert.deepEqual(fact.cuts(), [new Set([fact])]);
+       assert.deepEqual(fact.cuts, [new Set([fact])]);
     });
 
     test("Cut with one option is one edge", () => {
@@ -112,7 +158,7 @@ describe("Node cuts", () => {
         const attack = graph.add(Node.make("my-attack", "MyAttack", [{
             name: "my-fact", ...defaultFrom
         }], "attack", graph));
-        assert.deepEqual(attack.cuts(), [new Set([fact, attack])]);
+        assert.deepEqual(attack.cuts, [new Set([fact, attack])]);
     });
 
     test("Cut with two options is both edges", () => {
@@ -124,7 +170,7 @@ describe("Node cuts", () => {
         }, {
             name: "my-fact-2", ...defaultFrom
         }], "attack", graph));
-        assert.deepEqual(attack.cuts(), [new Set([fact1, attack]), new Set([fact2, attack])]);
+        assert.deepEqual(attack.cuts, [new Set([fact1, attack]), new Set([fact2, attack])]);
     });
 
     test("Cut with option and required is option edge with given", () => {
@@ -136,7 +182,7 @@ describe("Node cuts", () => {
         }, {
             name: "my-fact-2", ...defaultFrom, required: true
         }], "attack", graph));
-        assert.deepEqual(attack.cuts(), [new Set([fact1, fact2, attack])]);
+        assert.deepEqual(attack.cuts, [new Set([fact1, fact2, attack])]);
     });
 
     test("Cut with two required is both given", () => {
@@ -148,7 +194,7 @@ describe("Node cuts", () => {
         }, {
             name: "my-fact-2", ...defaultFrom, required: true
         }], "attack", graph));
-        assert.deepEqual(attack.cuts(), [new Set([fact1, fact2, attack])]);
+        assert.deepEqual(attack.cuts, [new Set([fact1, fact2, attack])]);
     });
 
     test("Cut with two options and one required is both edges with given", () => {
@@ -163,7 +209,7 @@ describe("Node cuts", () => {
         }, {
             name: "my-fact-3", ...defaultFrom, required: true
         }], "attack", graph));
-        assert.deepEqual(attack.cuts(), [new Set([fact1, fact3, attack]), new Set([fact2, fact3, attack])]);
+        assert.deepEqual(attack.cuts, [new Set([fact1, fact3, attack]), new Set([fact2, fact3, attack])]);
     });
 
     test("Cut diamond is both sides", () => {
@@ -180,6 +226,6 @@ describe("Node cuts", () => {
         }, {
             name: "my-pre-2", ...defaultFrom
         }], "goal", graph));
-        assert.deepEqual(goal.cuts(), [new Set([fact, attack1, goal]), new Set([fact, attack2, goal])]);
+        assert.deepEqual(goal.cuts, [new Set([fact, attack1, goal]), new Set([fact, attack2, goal])]);
     });
 });
