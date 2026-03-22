@@ -151,7 +151,7 @@ export class Node implements RiskGraphEvent {
         return this.getRisk().value;
     }
 
-    getDisplayValue(display: "value" | "calc"): string {
+    getDisplayValue(display: "value" | "calc" | "defer"): string {
         // Default is to show risk probability
         let value: string;
         switch (display) {
@@ -162,10 +162,12 @@ export class Node implements RiskGraphEvent {
                     value = displayRiskValue(this.getRisk().value);
                 break;
             case "calc":
-                value = this.getRisk().calc;
+                return this.getRisk().calc;
+            case "defer":
+                value = "-";
                 break;
             default:
-                value = `#${display}?`;
+                return `#${display}?`;
         }
         return `ℙ:${value}`;
     }
@@ -179,6 +181,8 @@ export class Node implements RiskGraphEvent {
         return undefined;
     }
 }
+
+export type DisplayRisk = "value" | "calc" | "defer";
 
 class Mitigation extends Node {
     private priority = -1;
@@ -204,9 +208,9 @@ class Mitigation extends Node {
         return this.priority;
     }
 
-    getDisplayValue() {
+    getDisplayValue(display: DisplayRisk) {
         // Mitigations display their value in preventing goals
-        return `𝛿:${(displayRiskValue(this.getPriority()))}`;
+        return `𝛿:${(display === "defer" ? "-" : displayRiskValue(this.getPriority()))}`;
     }
 
     protected incomingRiskEffect() {

@@ -1,5 +1,8 @@
-import {defaultFrom, displayRiskValue, From, FromFlags, Node} from "./lib/node.js";
+// noinspection JSUnusedGlobalSymbols
+
+import {DisplayRisk, displayRiskValue, Node} from "./lib/node.js";
 import {NodeGraph} from "./lib/graph.js";
+import {GraphDeclaration, parseInput} from "./lib/parse.js";
 
 export const themes: { [name: string]: Theme } = {
     "classic": {
@@ -73,33 +76,6 @@ function mangleName(name: string) {
     return JSON.stringify(name);
 }
 
-export type Input = {
-    theme?: keyof typeof themes | string;
-    dark?: boolean;
-    reality?: "#hide" | string;
-    risk?: "value" | "calc";
-    title?: string;
-    goals?: NodeDeclaration[];
-    facts?: NodeDeclaration[];
-    attacks?: NodeDeclaration[];
-    mitigations?: NodeDeclaration[];
-    filter?: string[];
-    legend?: boolean;
-};
-
-export type NodeDeclaration = {
-    from: FromDeclaration[];
-} & { [name: string]: string; }
-
-export interface EffectDeclaration {
-    effect?: number;
-    implemented?: boolean; // Generally for mitigations
-    likelihood?: number; // Generally for attacks
-}
-
-export type FromDeclaration = string |
-    (Partial<FromFlags> & EffectDeclaration & { [name: string]: string | number | null; });
-
 type Theme = {
     "dark"?: boolean;
     "title"?: string;
@@ -120,59 +96,19 @@ type Theme = {
     "goal-text": string;
 };
 
-function firstProperty<T>(obj: { [key: string]: T }): [string, T] {
-    const entries = Object.entries(obj);
-    if (entries.length === 0) {
-        throw new Error("expected at least one key in object");
-    }
-    return entries[0];
+interface Input extends GraphDeclaration {
+    theme?: keyof typeof themes | string;
+    dark?: boolean;
+    reality?: "#hide" | string;
+    title?: string;
+    filter?: string[];
+    legend?: boolean;
 }
 
-function parseFrom(raw: FromDeclaration): From {
-    let from: From;
-    if (typeof raw == "object") {
-        const [fromName, rawLabel] = firstProperty(raw);
-        from = {...defaultFrom, name: fromName};
-        if (typeof rawLabel === "string" || typeof rawLabel === "number")
-            from.label = String(rawLabel);
-        if (typeof raw.backwards === "boolean")
-            from.backwards = raw.backwards;
-        if (typeof raw.ungrouped === "boolean")
-            from.ungrouped = raw.ungrouped;
-        if (typeof raw.required === "boolean")
-            from.required = raw.required;
-        if (typeof raw.sufficient === "boolean")
-            from.sufficient = raw.sufficient;
-        from.effect =
-            toEffect('effect', raw.effect) ??
-            toEffect('implemented', raw.implemented) ??
-            toEffect('likelihood', raw.likelihood) ??
-            (from.label === "#yolosec" ? 1 : undefined) ??
-            (function () {
-                const matchInlineEffect = from.label?.match(/\s*<(1|(0(\.\d+)?))>$/);
-                if (matchInlineEffect != null) {
-                    from.label = from.label?.substring(0, matchInlineEffect.index);
-                    return Number(matchInlineEffect[1]);
-                }
-            })();
-    } else {
-        from = {...defaultFrom, name: String(raw)};
-    }
-    return from;
-}
-
-function toEffect(key: string, value?: any):number | undefined {
-    const effect = Number(value);
-    if (effect < 0 || effect > 1) {
-        throw new Error(`Effect in {${key}: ${value}} must be between 0 and 1`);
-    }
-    return isNaN(effect) ? undefined : effect;
-}
-
-function wordwrap(text: string, limit: number): string {
+function wordwrap(text: string, limit: number): string[] {
     text = String(text);
     if (text.indexOf("\n") != -1) {
-        return text;
+        return text.split("\n");
     }
     const split = text.split(" ");
     let all = [];
@@ -190,7 +126,18 @@ function wordwrap(text: string, limit: number): string {
         }
     }
     all.push(current.join(" "));
-    return all.join("\n");
+    return all;
+}
+
+function defaultLabelForName(name: string): string {
+    return name.replace(/_/g, " ").replace(/^[a-z]/, c => c.toUpperCase());
+}
+
+export function getNodeLabel(node: Node, risk?: DisplayRisk) {
+    const lines = wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18);
+    if (risk)
+        lines.push(node.getDisplayValue(risk));
+    return lines;
 }
 
 type GraphvizNodeProperties = { [key: string]: string };
@@ -209,32 +156,6 @@ export type RenderedOutput = {
     types: { [key: string]: string };
     themeName: string;
 };
-
-function parseNode(node: NodeDeclaration): [string, string, From[]] {
-    if (typeof node != "object" || node === null) {
-        throw new Error(`nodes must each be an object containing at least one property`);
-    }
-    const [name, label] = firstProperty<string>(node);
-    const from = (node.from ?? []).map(parseFrom);
-    return [name, label, from];
-}
-
-function parseInput(parsed: Input): NodeGraph {
-    const graph = new NodeGraph();
-    (parsed.facts || []).forEach(node => {
-        if (!node.from?.length) {
-            node.from = ["reality"];
-        }
-        graph.add(Node.make(...parseNode(node), "fact", graph));
-    });
-    (parsed.attacks || []).forEach(node =>
-        graph.add(Node.make(...parseNode(node), "attack", graph)));
-    (parsed.mitigations || []).forEach(node =>
-        graph.add(Node.make(...parseNode(node), "mitigation", graph)));
-    (parsed.goals || []).forEach(node =>
-        graph.add(Node.make(...parseNode(node), "goal", graph)));
-    return graph;
-}
 
 export function convertToDot(parsed: Input): RenderedOutput {
     const font = 'Arial'
@@ -303,15 +224,10 @@ digraph {
         return filter.find(other => anyDominates(graph.forwardsAll, arrayN, other));
     }
 
-    function defaultLabelForName(name: string): string {
-        return name.replace(/_/g, " ").replace(/^[a-z]/, c => c.toUpperCase());
-    }
-
     const allNodeLines = graph.all
         .filter(node => shouldShow(node.name))
         .map(node => line(mangleName(node.name), {
-            label: wordwrap(node.label === null ? defaultLabelForName(node.name) : node.label, 18) +
-                (parsed.risk ? "\n" + node.getDisplayValue(parsed.risk) : ""),
+            label: getNodeLabel(node, parsed.risk).join("\n"),
             ...node.name === "reality" ? propertiesOfReality : {
                 fillcolor: theme[`${node.type}-fill`],
                 fontcolor: theme[`${node.type}-text`] || "black",
@@ -325,7 +241,7 @@ digraph {
                 const { name: fromName, label, backwards, effect } = from;
                 const props: GraphvizNodeProperties = {};
                 if (typeof label === "string") {
-                    props.xlabel = wordwrap(label, 20);
+                    props.xlabel = wordwrap(label, 20).join("\n");
                     props.fontcolor = theme["edge-text"];
                 }
                 if (parsed.risk && effect != null) {
@@ -405,7 +321,7 @@ digraph {
     // legend pseudo-nodes
     { rank=max; ${shownGoals.concat(parsed.legend ? ["legend_invis"] : []).map(goalName => mangleName(goalName) + "; ").join("")}}`);
     let footer = "\n\n}\n";
-    if (typeof parsed.legend !== "undefined" && typeof parsed.legend !== "boolean") {
+    if (!["undefined", "boolean"].includes(typeof parsed.legend)) {
         throw new Error(`legend attribute must be a boolean, instead was ${typeof parsed.legend}`);
     }
     if (parsed.legend) {
@@ -463,14 +379,14 @@ ${footer}`;
             footer,
         title: typeof parsed.title === "string" ? parsed.title : "",
         types: Object.fromEntries(graph.all.map(node => [node.name, node.type])),
-        themeName,
+        themeName
     };
 }
 
 declare function btoa(text: string): string;
 
 function base64Encode(text: string): string {
-    return btoa(encodeURIComponent(text).replace(/%([0-9A-F]{2})/g, function(match, p1) {
+    return btoa(encodeURIComponent(text).replace(/%([0-9A-F]{2})/g, function(_match, p1) {
         return String.fromCharCode(parseInt(p1, 16))
     }));
 }

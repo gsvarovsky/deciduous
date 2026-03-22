@@ -41,7 +41,6 @@ abstract class CalcRisk<Event> implements Readonly<Risk> {
         if (this.final == null) {
             try {
                 this.final = this.calcFinal(this.cnd);
-                console.debug(this.final.calc + " = " + this.final.value);
             } catch (e) {
                 if (e === RECURSING) {
                     this.final = {value: 0, calc: RECURSING};

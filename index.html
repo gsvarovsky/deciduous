@@ -523,7 +523,7 @@ filter:
     </div>
     <div id="dragger"></div>
     <script type="module">
-        import { themes, convertToDot, embedDotComment, embedSvgComment, trailingPngComment, parseEmbeddedComment } from "./layout.js";
+        import { getNodeLabel, themes, convertToDot, embedDotComment, embedSvgComment, trailingPngComment, parseEmbeddedComment } from "./layout.js";
         const renderTarget = document.getElementById("renderTarget");
         const errorTarget = document.getElementById("errorTarget");
         const inputSource = document.getElementById("inputSource");
@@ -580,6 +580,7 @@ filter:
             let lastPngObjectURL = "";
             let types = {};
             let themeName = "default";
+            let riskWorker;
             function selectRange(start, end) {
                 inputSource.blur();
                 inputSource.selectionEnd = inputSource.selectionStart = start;
@@ -677,7 +678,20 @@ filter:
                     try {
                         let dot, title;
                         const parsed = jsyaml.load(newInput);
-                        ({ dot, title, types, themeName } = convertToDot(parsed));
+                        // Defer risks to worker
+                        ({ dot, title, types, themeName } = convertToDot({...parsed, risk: parsed.risk && "defer"}));
+                        if (parsed.risk) {
+                            riskWorker?.terminate();
+                            riskWorker = new Worker("lib/worker.js", {type: "module"});
+                            riskWorker.postMessage(parsed);
+                            riskWorker.addEventListener("message", event => {
+                                const {display, name} = event.data;
+                                for (const title of renderTarget.querySelectorAll(".node title")) {
+                                    if (title.textContent === name)
+                                        title.parentElement.querySelector(":last-child").textContent = display;
+                                }
+                            });
+                        }
                         dark = themes[themeName].dark;
                         themePicker.value = themeName;
                         // Syntax highlighting
@@ -696,7 +710,7 @@ filter:
                             const scale = 0.75;
                             svgElement.setAttribute("width", parseInt(svgElement.getAttribute("width"), 10) * scale + "pt");
                             svgElement.setAttribute("height", parseInt(svgElement.getAttribute("height"), 10) * scale + "pt");
-                        };
+                        }
 
                         // Create a download link
                         if (window.File && URL.createObjectURL) {
