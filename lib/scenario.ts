@@ -17,15 +17,15 @@ export class Scenario {
 
     private constructor(
         readonly cut: Cut,
-        readonly omit: Node | null
+        readonly omit: Node | null = null
     ) {
         this.cutNodesNames = [...this.cut].map(node => node.name).sort();
     }
 
-    key(withOnly: Set<string>) {
+    key(withOnly?: Set<string>) {
         return JSON.stringify({
             omit: this.omit?.name,
-            cut: this.cutNodesNames.filter(name => withOnly.has(name))
+            cut: this.cutNodesNames.filter(name => withOnly?.has(name) ?? true)
         });
     }
 
@@ -34,14 +34,19 @@ export class Scenario {
     ): number => {
         return (!given.length ? event.getRisk(this).value : depOr(
             (...cuts) =>
-                event.getRisk(this.withGiven(unionCuts(cuts.flat()))).value,
+                event.getRisk(this.withGiven(unionCuts(cuts))).value,
             ...this.powerCuts(given)
         )) * (effect ?? 1);
     }
 
-    private *powerCuts(given: RiskEffect<RiskGraphEvent>[]) {
-        for (let powerCut of cartesian(given.map(([event]) => event.cuts)))
-            yield unionCuts(powerCut);
+    private powerCuts(given: RiskEffect<RiskGraphEvent>[]) {
+        // Power cuts are frequently duplicates, so create temporary scenarios to dedup
+        const powerCuts: {[key: string]: Cut} = {};
+        for (let powerCut of cartesian(given.map(([event]) => event.cuts))) {
+            const powerScenario = new Scenario(unionCuts(powerCut));
+            powerCuts[powerScenario.key()] = powerScenario.cut;
+        }
+        return Object.values(powerCuts);
     }
 }
 
