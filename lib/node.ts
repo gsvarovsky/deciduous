@@ -224,5 +224,5 @@ class Mitigation extends Node {
 }
 
 export function displayRiskValue(value: number) {
-    return `${+value.toPrecision(4)}`;
+    return `${+value.toFixed(4)}`;
 }
