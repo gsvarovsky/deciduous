@@ -1,0 +1,7 @@
+index.html
+favicon.ico
+layout.ts
+lib/**/*.ts
+test/**/*
+examples/**/*
+tsconfig.json

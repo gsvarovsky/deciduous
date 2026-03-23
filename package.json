@@ -1,5 +1,5 @@
 {
-  "name": "deciduous",
+  "name": "@gsvarovsky/deciduous",
   "version": "0.0.1",
   "description": "App that simplifies building decision trees to model adverse scenarios",
   "main": "layout.js",
@@ -8,12 +8,13 @@
   },
   "type": "module",
   "scripts": {
-    "test": "node --import tsx --test test/**/*.test.ts",
+    "prepublishOnly": "npm run build",
     "build": "tsc && npm run test",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "dev": "concurrently \"tsc --watch\" \"browser-sync start -s -f **/*\""
   },
   "bin": {
-    "deciduous": "./cli-cjs.js"
+    "deciduous": "cli-cjs.js"
   },
   "repository": {
     "type": "git",
