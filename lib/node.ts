@@ -103,19 +103,17 @@ export class Node implements RiskGraphEvent {
             const key = scenario.key(this.allCutNodeNames);
             if (this.riskScenarios[key] == null) {
                 const thisNode = this;
-                const optsCalc = new OrRisk<RiskGraphEvent>(scenario.depRiskProbability);
-                const reqsCalc = new class extends AndRisk<RiskGraphEvent> {
-                    calcFinal(conditions: RiskEffect<RiskGraphEvent>[]): Risk {
-                        return thisNode.applyOutgoingEffects(scenario, super.calcFinal(conditions));
-                    }
-                }(scenario.depRiskProbability);
                 const {options, required} = this.riskFroms();
                 if (options.length == 1)
                     required.push(options.pop()!);
-                optsCalc.conditions.push(...options);
-                reqsCalc.conditions.push(...required);
                 if (required.length || !options.length) {
+                    const reqsCalc = new class extends AndRisk<RiskGraphEvent> {
+                        calcFinal(conditions: RiskEffect<RiskGraphEvent>[]): Risk {
+                            return thisNode.applyOutgoingEffects(scenario, super.calcFinal(conditions));
+                        }
+                    }(scenario.depRiskProbability, required);
                     if (options.length) {
+                        const optsCalc = new OrRisk<RiskGraphEvent>(scenario.depRiskProbability, options);
                         // Pseudo required node for options
                         const optsPseudoNode = {
                             get name() {
@@ -128,6 +126,11 @@ export class Node implements RiskGraphEvent {
                     }
                     this.riskScenarios[key] = reqsCalc.finalise();
                 } else {
+                    const optsCalc = new class extends OrRisk<RiskGraphEvent> {
+                        calcFinal(conditions: RiskEffect<RiskGraphEvent>[]): Risk {
+                            return thisNode.applyOutgoingEffects(scenario, super.calcFinal(conditions));
+                        }
+                    }(scenario.depRiskProbability, options);
                     this.riskScenarios[key] = optsCalc.finalise();
                 }
             }

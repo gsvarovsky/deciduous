@@ -69,6 +69,21 @@ test("Alternatives add risk", () => {
     assert.equal(attack.getRisk().value, 0.19);
 });
 
+test("Alternatives can be mitigated", () => {
+    const graph = new NodeGraph();
+    graph.add(Node.make("my-fact-1", "MyFact1", [], "fact", graph));
+    graph.add(Node.make("my-fact-2", "MyFact2", [], "fact", graph));
+    const attack = graph.add(Node.make("my-attack", "MyAttack", [{
+        name: "my-fact-1", ...defaultFrom, effect: 0.1
+    }, {
+        name: "my-fact-2", ...defaultFrom, effect: 0.1
+    }], "attack", graph));
+    graph.add(Node.make("my-mitigation", "MyMitigation", [{
+        name: "my-attack", ...defaultFrom, effect: 0.5
+    }], "mitigation", graph));
+    assert.equal(attack.getRisk().value, 0.095);
+});
+
 test("Dependent alternatives add less risk", () => {
     const graph = new NodeGraph();
     graph.add(Node.make("my-risk", "MyRisk", [{

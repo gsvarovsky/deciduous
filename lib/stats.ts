@@ -12,7 +12,8 @@ export function depAnd<Event>(
 ): number {
     let p = 1;
     for (let i = 0; i < events.length; i++) {
-        p *= probabilityOf(events[i], ...events.slice(0, i));
+        const pDependent = probabilityOf(events[i], ...events.slice(0, i));
+        p *= pDependent;
     }
     return p;
 }
