@@ -1,6 +1,6 @@
 {
   "name": "@gsvarovsky/deciduous",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "App that simplifies building decision trees to model adverse scenarios",
   "main": "layout.js",
   "directories": {
