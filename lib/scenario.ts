@@ -1,6 +1,7 @@
 import type {Node} from "./node.js";
 import {Risk, RiskEffect} from "./risk.js";
 import {cartesian, depOr, GetDepProbability} from "./stats.js";
+import {simplifyUnion, union} from "./sets.js";
 
 export class Scenario {
     private readonly cutNodesNames: string[];
@@ -12,7 +13,7 @@ export class Scenario {
     }
 
     withGiven(cut: Cut) {
-        return new Scenario(unionCuts([this.cut, cut]), this.omit);
+        return new Scenario(union([this.cut, cut]), this.omit);
     }
 
     private constructor(
@@ -29,24 +30,25 @@ export class Scenario {
         });
     }
 
-    readonly depRiskProbability: GetDepProbability<RiskEffect<RiskGraphEvent>> = (
+    readonly depRiskProbability: GetDepProbability<RiskGraphEventEffect> = (
         [event, effect], ...given
     ): number => {
-        return (!given.length ? event.getRisk(this).value : depOr(
-            (...cuts) =>
-                event.getRisk(this.withGiven(unionCuts(cuts))).value,
-            ...this.powerCuts(given)
-        )) * (effect ?? 1);
-    }
-
-    private powerCuts(given: RiskEffect<RiskGraphEvent>[]) {
-        // Power cuts are frequently duplicates, so create temporary scenarios to dedup
-        const powerCuts: {[key: string]: Cut} = {};
-        for (let powerCut of cartesian(given.map(([event]) => event.cuts))) {
-            const powerScenario = new Scenario(unionCuts(powerCut));
-            powerCuts[powerScenario.key()] = powerScenario.cut;
+        let eventRiskValue: number;
+        if (!given.length) {
+            eventRiskValue = event.getRisk(this).value;
+        } else {
+            const pEventCuts: GetDepProbability<Cut> = (...cuts) =>
+                event.getRisk(this.withGiven(union(cuts))).value;
+            const powerCuts: Cut[] = [];
+            for (let powerCut of cartesian(given.map(([event]) => event.cuts))) {
+                // OPTIMISATION: Ignore anything not in the event's cuts
+                powerCuts.push(union(powerCut, event.cuts));
+            }
+            // OPTIMISATION: Ignore any cuts that are a subset of another (A ∪ B = A, if B ⊆ A)
+            const simplified = simplifyUnion(powerCuts);
+            eventRiskValue = depOr(pEventCuts, ...Object.values(simplified));
         }
-        return Object.values(powerCuts);
+        return eventRiskValue * (effect ?? 1);
     }
 }
 
@@ -59,17 +61,10 @@ export interface RiskGraphEvent {
     toString(): string;
 }
 
+export type RiskGraphEventEffect = RiskEffect<RiskGraphEvent>;
+
 export const REALITY: RiskGraphEvent = {
     name: "reality",
     cuts: [],
     getRisk: () => ({value: 1, calc: "#REALITY"})
-}
-
-export function unionCuts(cuts: Cut[]) {
-    const union = new Set<RiskGraphEvent>;
-    for (let cut of cuts) {
-        for (let node of cut)
-            union.add(node);
-    }
-    return union;
 }

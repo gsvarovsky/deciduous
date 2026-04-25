@@ -9,10 +9,11 @@ export type RiskEffect<Event> = [event: Event, effect?: number];
 
 export const RECURSING = "#REC!";
 
-abstract class CalcRisk<Event> implements Readonly<Risk> {
+export class CalcRisk<Event> implements Readonly<Risk> {
     private final?: Risk;
 
     constructor(
+        private type: "AND" | "OR",
         protected probabilityOf: GetDepProbability<RiskEffect<Event>>,
         private cnd: RiskEffect<Event>[] = []
     ) {}
@@ -49,26 +50,12 @@ abstract class CalcRisk<Event> implements Readonly<Risk> {
                 }
             }
         }
-        return this;
     }
 
-    protected abstract calcFinal(conditions: RiskEffect<Event>[]): Risk;
-}
-
-export class OrRisk<Event> extends CalcRisk<Event> {
-    calcFinal(conditions: RiskEffect<Event>[]): Risk {
+    protected calcFinal(conditions: RiskEffect<Event>[]): Risk {
         return {
-            value: depOr(this.probabilityOf, ...conditions),
-            calc: operatorString("OR", conditions)
-        };
-    }
-}
-
-export class AndRisk<Event> extends CalcRisk<Event> {
-    calcFinal(conditions: RiskEffect<Event>[]): Risk {
-        return {
-            value: depAnd(this.probabilityOf, ...conditions),
-            calc: operatorString("AND", conditions)
+            value: (this.type === "AND" ? depAnd : depOr)(this.probabilityOf, ...conditions),
+            calc: operatorString(this.type, conditions)
         };
     }
 }

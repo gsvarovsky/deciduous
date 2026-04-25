@@ -1,3 +1,4 @@
 layout.js
 lib/**/*.js
+**/*.js.map
 node_modules

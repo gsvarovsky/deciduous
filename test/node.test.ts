@@ -11,6 +11,18 @@ test("Fact risk is one", () => {
     assert.equal(node.getRisk().value, 1);
 });
 
+test("Attack risk is zero", () => {
+    const graph = new NodeGraph();
+    const node = graph.add(Node.make("my-risk", "MyRisk", [], "attack", graph));
+    assert.equal(node.getRisk().value, 0);
+});
+
+test("Goal risk is zero", () => {
+    const graph = new NodeGraph();
+    const node = graph.add(Node.make("my-goal", "MyGoal", [], "goal", graph));
+    assert.equal(node.getRisk().value, 0);
+});
+
 test("Fact risk can be affected from reality", () => {
     const graph = new NodeGraph();
     const node = graph.add(Node.make("my-fact", "MyFact", [{
